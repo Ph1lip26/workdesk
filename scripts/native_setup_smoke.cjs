@@ -1,7 +1,9 @@
 // Empty synthetic home only. No account, private paths, or model invocation.
 const {app}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const desk=require('../desktop/main.cjs');
+const payload=process.env.WORKDESK_TEST_PAYLOAD;
+if(payload){Object.defineProperty(app,'isPackaged',{value:true});Object.defineProperty(process,'resourcesPath',{value:path.join(path.resolve(payload),'resources')})}
+const desk=require(payload?path.join(process.resourcesPath,'app.asar/desktop/main.cjs'):'../desktop/main.cjs');
 const checks=[];
 const check=(name,actual,expected=true)=>{assert.equal(actual,expected,name);checks.push(name);console.log('PASS',name)};
 (async()=>{

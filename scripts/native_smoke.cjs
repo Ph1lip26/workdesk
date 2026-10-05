@@ -1,7 +1,9 @@
 // Run with Electron, not a renderer test framework; excluded from the installer.
 const {app}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const desk=require('../desktop/main.cjs');
+const payload=process.env.WORKDESK_TEST_PAYLOAD;
+if(payload){Object.defineProperty(app,'isPackaged',{value:true});Object.defineProperty(process,'resourcesPath',{value:path.join(path.resolve(payload),'resources')})}
+const desk=require(payload?path.join(process.resourcesPath,'app.asar/desktop/main.cjs'):'../desktop/main.cjs');
 const {request}=require('../desktop/platform.cjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const checks=[];
