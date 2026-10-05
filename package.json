@@ -1,6 +1,6 @@
 {
   "name": "workdesk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Private-first personal workbench with a Douyin knowledge intake module",
   "main": "desktop/main.cjs",
   "private": true,

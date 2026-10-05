@@ -183,7 +183,6 @@ dialog #toast{max-width:calc(100% - 28px)}
 .module-panel{position:fixed;inset:0 auto 0 var(--rail-width);width:var(--panel-width);height:100dvh;z-index:14;background:var(--panel-bg);border-right:1px solid #ffffff08;display:flex;flex-direction:column;overflow:hidden}
 .panel-heading{padding:26px 24px 28px;position:relative}
 #closenav{display:none;position:absolute;right:16px;top:24px;width:28px;height:28px;font-size:21px;background:#ffffff08;color:#a3a3a3}
-.nav-drawer #closenav{display:block}
 .panel-heading p{color:#929292;font-size:11px;letter-spacing:.5px;margin-bottom:9px}
 .panel-heading h2{font-size:17px;letter-spacing:-.3px;font-weight:600}
 .panel-nav{padding:0 12px 20px;overflow-y:auto;flex:1;scrollbar-width:thin;scrollbar-color:#404040 transparent}
@@ -229,13 +228,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .selectionbar{left:calc(50% + var(--workspace-offset)/2);max-width:calc(100vw - var(--workspace-offset) - 30px);background:#2c2c2ced}
 .card-menu[open] summary{background:#353535;color:#e4e4e4}
 dialog{background:#202020;border-color:#ffffff1c}
-.nav-drawer{inset:0 auto 0 var(--rail-width);margin:0;padding:0;border:0;border-right:1px solid #ffffff12;border-radius:0;width:var(--panel-width);max-width:calc(100vw - var(--rail-width));height:100dvh;max-height:100dvh;overflow:hidden}
-.nav-drawer .module-panel{position:static;inset:auto;width:100%;height:100%;border:0}
-.nav-drawer[open]{animation:nav-enter .2s var(--ease-out)}
 .panel-collapsed{--workspace-offset:var(--rail-width)}
-.panel-collapsed #panelhost{display:none}
-.panel-collapsed #navtoggle svg{transform:rotate(180deg)}
-@keyframes nav-enter{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
+#navtoggle[aria-expanded=false] svg{transform:rotate(180deg)}
 @media(min-width:1101px){.workspace .cards{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}}
 @media(max-width:1100px){:root{--workspace-offset:var(--rail-width)}.workspace .cards{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}.workspace .topbar{padding:26px 26px 22px}.workspace main{padding:0 26px 105px}}
 @media(max-width:600px){
@@ -247,10 +241,10 @@ dialog{background:#202020;border-color:#ffffff1c}
  .workspace main{padding:0 14px 105px}.controls{flex-wrap:nowrap;gap:8px}.search-box{min-width:0;flex-basis:auto;padding:11px}.controls select{flex:none;width:132px;padding:11px 19px 11px 9px;font-size:11px}.search-box svg{width:14px;height:14px}.search-box input{font-size:11px}
  .workspace .cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 10px}.card-content{padding:10px}.card-title{font-size:12px}.author{font-size:10px}.cover-status{font-size:10px;padding:5px 7px;right:6px;top:7px;min-height:25px}.cover-status svg{width:11px;height:11px}
  .list-meta{gap:8px;align-items:start}.select-all{white-space:nowrap;padding-top:1px}.select-all input{width:16px;height:16px}.selectionbar{white-space:normal;flex-wrap:wrap;justify-content:center;padding:10px 11px;gap:6px 8px;width:max-content}.selectionbar #selected{white-space:nowrap}
- .panel-heading{padding-top:24px}.nav-drawer::backdrop{backdrop-filter:none}
+ .panel-heading{padding-top:24px}
 }
 @media(max-width:370px){.controls{flex-wrap:wrap}.search-box{flex-basis:100%}.controls select{width:100%}.workspace .topbar{padding-left:14px;padding-right:14px;gap:8px}.workspace h1{font-size:18px}.workspace .cards{grid-template-columns:1fr}.cover{aspect-ratio:4/3}}
-@media(prefers-reduced-motion:reduce){.nav-drawer[open]{animation:none}.rail-button:active{transform:none}}
+@media(prefers-reduced-motion:reduce){.rail-button:active{transform:none}}
 
 /* One viewport-edge content scroller; native modals never scroll the page behind.
    The fixed rail and panel are siblings, not part of the content scroll frame. */
@@ -324,3 +318,26 @@ pre {font-weight:500}
 input[type=checkbox]::after {width:13px;height:13px;border:0;background:#171717;mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20%3E%20%3Cpath%20d%3D%22M20%206%209%2017l-5-5%22%20%2F%3E%20%3C%2Fsvg%3E");mask-size:contain;mask-position:center;mask-repeat:no-repeat;transform:none}
 input[type=checkbox]:checked::after {transform:none}
 input[type=checkbox]:indeterminate::after {width:13px;height:13px;border:0;mask-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20%3E%20%3Cpath%20d%3D%22M5%2012h14%22%20%2F%3E%20%3C%2Fsvg%3E");transform:none}
+
+/* Joined navigation: same Rail + Panel at every width, no modal/backdrop. */
+:root{--chrome-height:0px}
+.module-rail,.module-panel{top:var(--chrome-height);height:calc(100dvh - var(--chrome-height))}
+.module-panel{transition:transform .24s var(--ease-out),visibility .24s;transform:translateX(0);visibility:visible}
+.panel-collapsed .module-panel{transform:translateX(-100%);visibility:hidden;pointer-events:none}
+.workspace{height:calc(100dvh - var(--chrome-height));margin-top:var(--chrome-height);transition:margin-left .24s var(--ease-out),width .24s var(--ease-out)}
+@media(max-width:1100px){
+ .module-panel{transform:translateX(-100%);visibility:hidden;pointer-events:none}
+ .nav-open{--workspace-offset:calc(var(--rail-width) + var(--panel-width))}
+ .nav-open .module-panel{transform:translateX(0);visibility:visible;pointer-events:auto}
+ #closenav{display:grid}
+}
+/* Phone-width browser views keep readable content, with an attached nonmodal panel. */
+@media(max-width:600px){.nav-open{--workspace-offset:var(--rail-width)}}
+
+/* Windows native caption buttons overlay the page; no separate OS title strip.
+   Safe drag area follows Electron's titlebar-area API, not guessed control widths. */
+.window-chrome{display:none}
+.desktop-shell{--chrome-height:40px}
+.desktop-shell .window-chrome{display:flex;align-items:center;position:fixed;inset:0 0 auto;z-index:20;height:var(--chrome-height);padding-left:calc(var(--rail-width) + 24px);color:var(--muted);background:linear-gradient(to right,var(--rail-bg) 0 var(--rail-width),var(--panel-bg) var(--rail-width) var(--workspace-offset),var(--bg) var(--workspace-offset) 100%);user-select:none;app-region:drag}
+.window-title{font-size:12px;font-weight:500;letter-spacing:.02em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:calc(env(titlebar-area-width,100vw) - var(--rail-width) - 48px)}
+.desktop-shell .drawer{top:var(--chrome-height);height:calc(100dvh - var(--chrome-height));max-height:calc(100dvh - var(--chrome-height))}

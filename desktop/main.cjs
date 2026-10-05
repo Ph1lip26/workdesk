@@ -22,6 +22,7 @@ function python(){return process.env.WORKDESK_PYTHON || path.join(runtime(),proc
 function fail(e){fs.mkdirSync(home,{recursive:true});fs.appendFileSync(path.join(home,'desktop.log'),`${new Date().toISOString()} ${e.message}\n`);dialog.showErrorBox('Workdesk',`${e.message}\n已有私人数据保留。`)}
 async function create(){
   window=new BrowserWindow({width:1440,height:920,minWidth:800,minHeight:560,title:'Workdesk · 个人工作台',backgroundColor:'#141414',
+    titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:{color:'#141414',symbolColor:'#c8c8c8',height:40}}:{}),
     icon:path.join(__dirname,'../assets/app.ico'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,devTools:false}});
   window.on('close',e=>{if(!quitting){e.preventDefault();window.hide()}});
   window.webContents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));

@@ -40,7 +40,7 @@ function renderNavigation(){
 function selectSource(value){
  folder=value.startsWith('folder:')?value.slice(7):'';view=folder?'favorites':value;pageNumber=1;
  // Search and status remain explicit user filters when changing the source.
- render();if($('navdrawer').open)$('navdrawer').close();
+ render();closeCompactNavigation();
  $('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
 }
 function render(){
@@ -94,34 +94,43 @@ async function refresh(){if(busy)return;busy=true;try{state=await api('state');f
 $('source').onchange=()=>selectSource($('source').value);
 $('modulepanel').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(button&&state)selectSource(button.dataset.source)});
 const compactNavigation=matchMedia('(max-width:1100px)');
-let panelCollapsed=false;
+let panelCollapsed=false,compactPanelOpen=false;
 function updateNavigationLayout(){
- const panel=$('modulepanel'),drawer=$('navdrawer');
- if(drawer.open)drawer.close();
- (compactNavigation.matches?drawer:$('panelhost')).append(panel);
+ // One persistent panel, never moved into a modal/top layer.
+ if(compactNavigation.matches&&$('modulepanel').contains(document.activeElement))$('navtoggle').focus({preventScroll:true});
+ compactPanelOpen=false;
  document.body.classList.toggle('panel-collapsed',!compactNavigation.matches&&panelCollapsed);
  updateNavigationToggle();
 }
 function updateNavigationToggle(){
- const expanded=compactNavigation.matches?$('navdrawer').open:!panelCollapsed;
+ const expanded=compactNavigation.matches?compactPanelOpen:!panelCollapsed;
+ document.body.classList.toggle('nav-open',compactNavigation.matches&&compactPanelOpen);
+ $('modulepanel').inert=!expanded;
+ $('modulepanel').setAttribute('aria-hidden',String(!expanded));
  $('navtoggle').setAttribute('aria-expanded',String(expanded));
  $('navtoggle').setAttribute('aria-label',expanded?'收起导航':'展开导航');$('navtoggle').title=expanded?'收起导航':'展开导航';
 }
+function closeCompactNavigation(restoreFocus=false){
+ if(!compactNavigation.matches||!compactPanelOpen)return;
+ if(restoreFocus)$('navtoggle').focus({preventScroll:true});
+ compactPanelOpen=false;updateNavigationToggle();
+}
 function toggleNavigation(){
- if(compactNavigation.matches){if($('navdrawer').open)$('navdrawer').close();else $('navdrawer').showModal()}
+ if(compactNavigation.matches)compactPanelOpen=!compactPanelOpen;
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
  updateNavigationToggle();
 }
 $('navtoggle').onclick=toggleNavigation;
-$('closenav').onclick=()=>$('navdrawer').close();
+$('closenav').onclick=()=>closeCompactNavigation(true);
 $('douyinmodule').onclick=()=>{if(compactNavigation.matches)toggleNavigation();else if(panelCollapsed){panelCollapsed=false;document.body.classList.remove('panel-collapsed');updateNavigationToggle()}};
-$('navdrawer').addEventListener('close',updateNavigationToggle);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&compactPanelOpen&&!document.querySelector('dialog:modal')){e.preventDefault();closeCompactNavigation(true)}});
+document.addEventListener('click',e=>{if(!e.target.closest('#modulepanel,.module-rail,dialog')&&!document.querySelector('dialog:modal'))closeCompactNavigation()});
 compactNavigation.addEventListener('change',updateNavigationLayout);updateNavigationLayout();
 const resetPage=()=>{pageNumber=1;if(state)render()};
 $('search').oninput=resetPage;$('status').onchange=resetPage;$('sort').onchange=resetPage;
 $('prevpage').onclick=()=>changePage(pageNumber-1);$('nextpage').onclick=()=>changePage(pageNumber+1);
 $('sync').onclick=()=>action('sync');$('login').onclick=()=>action('login');$('openlogin').onclick=async()=>{const r=await action('open_login');if(r)toast('扫码完成后关闭窗口，刷新在后台进行')};$('refresh').onclick=async()=>{const r=await action('refresh');if(r)toast('入库状态已重新检查')};
-$('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queueopen').onclick=()=>{if($('navdrawer').open)$('navdrawer').close();$('queuepanel').showModal()};$('closequeue').onclick=()=>$('queuepanel').close();$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
+$('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queueopen').onclick=()=>{closeCompactNavigation();$('queuepanel').showModal()};$('closequeue').onclick=()=>$('queuepanel').close();$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
 $('import').onclick=async()=>{const r=await action('import',{links:$('links').value});if(r){$('links').value='';view='local';folder='';pageNumber=1;render();$('tools').close();toast('已加入待选列表')}};
 $('clear').onclick=()=>{selection.clear();render()};
 $('selectall').onclick=()=>{const candidates=pageSlice(visible()).filter(eligible);if(candidates.some(v=>selection.has(v.id))){for(const v of candidates)selection.delete(v.id)}else{for(const v of candidates){if(selection.size>=20)break;selection.add(v.id)}}render()};

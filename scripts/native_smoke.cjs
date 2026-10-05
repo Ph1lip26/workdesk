@@ -16,6 +16,43 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('page contains thirty cards',await js("document.querySelectorAll('.card').length"),30);
   check('no Node in renderer',await js("typeof require==='undefined' && typeof process==='undefined'"));
   const pref=wc.getLastWebPreferences();check('sandbox enabled',pref.sandbox);check('context isolation enabled',pref.contextIsolation);check('Node integration disabled',pref.nodeIntegration,false);
+  check('native caption buttons overlay page',await js('navigator.windowControlsOverlay.visible'));
+  check('integrated drag strip is forty pixels',await js("document.querySelector('.window-chrome').getBoundingClientRect().height"),40);
+  check('title strip can drag window',await js("getComputedStyle(document.querySelector('.window-chrome')).getPropertyValue('app-region')"),'drag');
+  check('safe title width respects native buttons',await js("document.querySelector('.window-title').getBoundingClientRect().right<=navigator.windowControlsOverlay.getTitlebarAreaRect().right"));
+  check('no floating navigation dialog',await js("document.getElementById('navdrawer')===null"));
+  const originalPanel=await js("document.getElementById('modulepanel').parentElement.id");
+  for(const width of [1080,960,800]){
+   w.setContentSize(width,720);await sleep(100);
+   // Overlay frames can add a two-DIP client inset on Windows; test CSS widths.
+   const actualWidth=await js('innerWidth');if(actualWidth!==width)w.setContentSize(width-(actualWidth-width),720);
+   await sleep(350);check(`${width}: viewport within native inset tolerance`,Math.abs(await js('innerWidth')-width)<=2);
+   check(`${width}: compact panel starts closed`,await js("document.getElementById('modulepanel').inert"));
+   await js("document.getElementById('navtoggle').click()");await sleep(350);
+   check(`${width}: panel joined to rail`,await js("document.getElementById('modulepanel').getBoundingClientRect().left===document.querySelector('.module-rail').getBoundingClientRect().right"));
+   check(`${width}: content sits beside panel`,await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.getElementById('modulepanel').getBoundingClientRect().right)<1"));
+   check(`${width}: navigation never opens a modal`,await js("!document.querySelector('dialog:modal')"));
+   check(`${width}: navigation does not lock or blur content`,await js("getComputedStyle(document.querySelector('.workspace')).overflowY==='auto'&&getComputedStyle(document.querySelector('.workspace')).filter==='none'&&getComputedStyle(document.querySelector('.workspace')).backdropFilter==='none'"));
+   check(`${width}: scrollbar reaches viewport edge`,await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().right-innerWidth)<1"));
+   check(`${width}: rail and panel below integrated chrome`,await js("document.querySelector('.module-rail').getBoundingClientRect().top===40&&document.getElementById('modulepanel').getBoundingClientRect().top===40"));
+   check(`${width}: panel remains in original host`,await js("document.getElementById('modulepanel').parentElement.id"),originalPanel);
+   if(width===960)await wc.capturePage().then(img=>fs.writeFileSync(path.join(app.getPath('userData'),'native-compact-open.png'),img.toPNG()));
+   await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await sleep(350);
+   check(`${width}: Escape closes and restores rail focus`,await js("document.getElementById('modulepanel').inert&&document.activeElement.id==='navtoggle'"));
+  }
+  await js("document.getElementById('douyinmodule').click()");await sleep(350);
+  await js("document.querySelector('.workspace').click()");await sleep(350);
+  check('outside click closes attached panel',await js("document.getElementById('modulepanel').inert"));
+  await js("document.getElementById('navtoggle').click();document.getElementById('closenav').click()");await sleep(350);
+  check('close button closes attached panel',await js("document.getElementById('modulepanel').inert"));
+  await js("document.getElementById('navtoggle').click();document.querySelector('[data-source=local]').click()");await sleep(350);
+  check('source selection closes panel',await js("document.getElementById('modulepanel').inert"));
+  await js("document.getElementById('navtoggle').click();document.querySelector('[data-source=favorites]').click()");
+  w.setContentSize(1440,920);await sleep(350);
+  check('wide resize restores joined panel',await js("!document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-312)<1"));
+  await js("document.getElementById('navtoggle').click()");await sleep(350);
+  check('wide collapse frees content space',await js("document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-72)<1"));
+  await js("document.getElementById('navtoggle').click()");await sleep(350);
   check('first work is newest favorite',await js("document.querySelector('.card').dataset.id"),'1000000000000000001');
   check('existing note is recognized',await js("document.querySelector('.card').dataset.status"),'done');
   check('saved work cannot re-enqueue',await js("document.querySelector('.card input').disabled"));
@@ -31,6 +68,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("document.getElementById('queuepanel').close();document.getElementById('toolsopen').click()");
   check('tools dialog opens',await js("document.getElementById('tools').open"));
   await js("document.getElementById('tools').close()");
+  const bounds=w.getBounds();w.maximize();await sleep(300);check('native maximize works',w.isMaximized());w.unmaximize();await sleep(300);
+  w.minimize();await sleep(200);check('native minimize works',w.isMinimized());desk.show();await sleep(200);w.setBounds(bounds);
   check('settings bridge refuses workbench page',await js("window.workdesk.getSettings().then(()=>false,()=>true)"));
   check('idle state before close',await desk.idle());
   const before=JSON.parse(await request(desk.origin,'/health'));
