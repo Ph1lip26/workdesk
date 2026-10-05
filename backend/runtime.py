@@ -21,6 +21,8 @@ for folder in (ROOT/'data', MEDIA, PRIVATE):
 os.environ['WORKDESK_HOME'] = str(ROOT)
 os.environ['WORKDESK_CONFIG'] = str(CONFIG_PATH)
 os.environ['PYTHONUTF8'] = '1'
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+sys.dont_write_bytecode = True
 os.environ['PYTHONPATH'] = str(ROOT/'components')
 os.environ['HF_HOME'] = str(ROOT/'cache/huggingface')
 if CONFIG.get('hf_endpoint'):

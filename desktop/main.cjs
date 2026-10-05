@@ -67,7 +67,7 @@ async function startBackend(){
   const port=await new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p))})});
   const instance=crypto.randomUUID();origin=`http://127.0.0.1:${port}`;
   const env={...process.env,WORKDESK_HOME:home,WORKDESK_CONFIG:path.join(home,'config.json'),WORKDESK_INSTANCE:instance,
-    PLAYWRIGHT_BROWSERS_PATH:path.join(runtime(),'browsers'),PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8'};
+    PLAYWRIGHT_BROWSERS_PATH:path.join(runtime(),'browsers'),PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8',PYTHONDONTWRITEBYTECODE:'1'};
   for(const k of Object.keys(env))if(/^(OPENAI_|DEEPSEEK_|GH_TOKEN$|GITHUB_TOKEN$)/.test(k))delete env[k];
   const log=fs.openSync(path.join(home,'backend.log'),'a');
   backend=spawn(python(),[path.join(bundle(),'server.py'),'--port',String(port)],{cwd:bundle(),env,windowsHide:true,detached:true,stdio:['ignore',log,log]});

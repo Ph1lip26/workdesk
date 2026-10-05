@@ -47,7 +47,7 @@ $env:WORKDESK_PYTHON = Join-Path (Get-Location) 'build/runtime/python.exe'
 & .\node_modules\electron\dist\electron.exe .\scripts\native_smoke.cjs
 ```
 
-项目代码与私人数据严格分离；源文件和安装载荷采用白名单。**每次代码更新：测试 → 隐私检查 → 提交 → 推送本仓库。正式版本另打 tag 并发布安装包。** 不设置“监视整个电脑并自动上传”的后台任务。
+项目代码与私人数据严格分离；源文件和安装载荷采用白名单。**每次代码更新：测试 → 隐私检查 → 提交 → 推送本仓库。正式版本另打 tag 并发布安装包。** 可运行 `pwsh -NoProfile -File scripts/sync.ps1 -Message "更新说明"`；不设置“监视整个电脑并自动上传”的后台任务。
 
 `docs/github-actions/` 保留自动测试与 Windows Release 模板。当前发布凭证没有 `workflow` 权限，因此模板未启用；日常同步和正式发布仍先在本机完成测试与隐私检查。未来授权后才能把模板放入 `.github/workflows/`，不能把模板当成已运行的 CI。
 

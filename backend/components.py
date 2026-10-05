@@ -11,7 +11,7 @@ LOCK=threading.Lock()
 def ensure_decoder(logfile):
     target=ROOT/'components'
     if importlib.util.find_spec('av'):return
-    env=dict(os.environ,PYTHONPATH=str(target),PIP_CACHE_DIR=str(ROOT/'cache/pip'),PYTHONUTF8='1')
+    env=dict(os.environ,PYTHONPATH=str(target),PIP_CACHE_DIR=str(ROOT/'cache/pip'),PYTHONUTF8='1',PYTHONDONTWRITEBYTECODE='1')
     with LOCK:
         # A completed prior local install can be reused after process restart.
         probe=[str(PYTHON),'-c',"import av; assert av.__version__=='18.0.0'"]
