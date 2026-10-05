@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'"><title>Workdesk · 配置</title><link rel="stylesheet" href="setup.css"></head><body><main>
+<p class="eyebrow">WORKDESK</p><h1>连接你的知识库</h1><p class="intro">程序和私人数据分开保存。下面的路径只保存在这台电脑，不上传到 GitHub。</p>
+<form id="settings">
+<label>Obsidian 知识库文件夹<div><input id="vault_path" readonly required placeholder="选择已有知识库"><button type="button" data-kind="vault_path">选择文件夹</button></div></label>
+<label>Codex 命令行程序<div><input id="codex_path" readonly placeholder="已安装并登录的 Codex CLI"><button type="button" data-kind="codex_path">选择程序</button></div></label>
+<label>Obsidian 命令行程序<div><input id="obsidian_path" readonly placeholder="Obsidian CLI，用于打开笔记及维护链接"><button type="button" data-kind="obsidian_path">选择程序</button></div></label>
+<details><summary>可选项</summary><label>已有素材目录<div><input id="media_path" readonly placeholder="留空使用程序的私人数据目录"><button type="button" data-kind="media_path">选择文件夹</button></div></label><label>转写模型下载来源<select id="hf_endpoint"><option value="">Hugging Face 官方</option><option value="https://hf-mirror.com">HF Mirror（第三方镜像）</option></select></label></details>
+<p class="hint">知识库须已有「处理文件」和「原始资料」目录；应用不会擅自创建你的主题。Codex 和 Obsidian 账号需在新电脑自行登录/配置。转写模型首次按需下载。</p>
+<p id="message" role="status"></p><button class="primary" type="submit">保存并打开工作台</button>
+</form></main><script src="setup.js"></script></body></html>

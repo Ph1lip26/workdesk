@@ -1,0 +1,42 @@
+{
+  "name": "workdesk",
+  "version": "0.2.0",
+  "description": "Private-first personal workbench with a Douyin knowledge intake module",
+  "main": "desktop/main.cjs",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node scripts/test.cjs",
+    "package:win": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.workdesk.desktop",
+    "productName": "Workdesk",
+    "directories": {"output": "build/dist"},
+    "files": ["desktop/**", "assets/app.ico", "assets/icon.png", "package.json"],
+    "electronDist": "node_modules/electron/dist",
+    "extraResources": [
+      {"from": "backend", "to": "backend", "filter": ["**/*", "!**/__pycache__/**", "!**/*.pyc"]},
+      {"from": "build/runtime", "to": "runtime", "filter": ["**/*", "!**/__pycache__/**", "!**/*.pyc", "!browsers/.links/**", "!Lib/site-packages/av/**", "!Lib/site-packages/av.libs/**", "!Lib/site-packages/av-*.dist-info/**"]},
+      {"from": "THIRD_PARTY_NOTICES.md", "to": "THIRD_PARTY_NOTICES.md"}
+    ],
+    "win": {"target": ["nsis"], "icon": "assets/app.ico", "signExecutable": false},
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Workdesk",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Workdesk-Setup-${version}-${arch}.${ext}",
+      "include": "scripts/installer.nsh"
+    },
+    "mac": {"target": ["dmg"], "category": "public.app-category.productivity"}
+  }
+}

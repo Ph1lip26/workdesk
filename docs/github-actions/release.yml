@@ -1,0 +1,35 @@
+name: Windows installer release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - run: python scripts/prepare_runtime.py
+      - run: npm test
+      - run: python scripts/privacy_check.py --tracked
+      - run: npm run package:win
+      - run: node scripts/audit_payload.cjs build/dist/win-unpacked
+      - name: SHA256 and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $file = Get-Item -LiteralPath "build/dist/Workdesk-Setup-$((Get-Content package.json | ConvertFrom-Json).version)-x64.exe"
+          $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($file.Name)" | Set-Content -LiteralPath build/dist/SHA256SUMS.txt -Encoding utf8
+          gh release create "$env:GITHUB_REF_NAME" $file.FullName build/dist/SHA256SUMS.txt --verify-tag --title "$env:GITHUB_REF_NAME" --notes-file CHANGELOG.md

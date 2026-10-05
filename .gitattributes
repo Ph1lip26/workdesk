@@ -1,0 +1,4 @@
+* text=auto eol=lf
+assets/*.ico -text
+backend/static/icons/*.svg -text
+backend/static/icons/LICENSE -text
