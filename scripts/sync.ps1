@@ -1,5 +1,6 @@
-param([Parameter(Mandatory=$true)][string]$Message)
+param([Parameter(Mandatory=$true)][string]$Message,[switch]$ConfirmUpload)
 $ErrorActionPreference='Stop'
+if(-not $ConfirmUpload){throw '先向用户确认本次阶段性成果是否上传；确认后才可传入 -ConfirmUpload。未提交或推送。'}
 $root=Split-Path -Parent $PSScriptRoot
 if(-not [IO.Path]::IsPathRooted($root)){throw 'Project path must be absolute'}
 Push-Location -LiteralPath $root

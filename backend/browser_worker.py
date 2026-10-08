@@ -20,6 +20,27 @@ def walk(value):
     elif isinstance(value, list):
         for v in value: yield from walk(v)
 
+def login_required_text(text):
+    # A generic "登录" button/footer is not proof that authentication expired.
+    return any(marker in text for marker in ('未登录','登录后即可观看喜欢、收藏的视频'))
+
+def login_prompt(page):
+    try:return login_required_text(page.locator('body').inner_text(timeout=3000))
+    except Exception:return False
+
+def retry_collection_scroll(page):
+    """Recover a stalled rendered list; never manufacture collection API calls."""
+    page.evaluate("""() => {
+        const candidates=[...document.querySelectorAll('main,section,div')].filter(el=>{
+            const r=el.getBoundingClientRect(),s=getComputedStyle(el);
+            return r.width>400 && r.height>200 && r.bottom>0 && r.top<innerHeight &&
+                el.scrollHeight>el.clientHeight+100 && /auto|scroll/.test(s.overflowY);
+        });
+        const target=candidates.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0] || document.scrollingElement;
+        if(target)target.scrollTop=Math.max(0,target.scrollHeight-target.clientHeight-200);
+    }""")
+    page.mouse.wheel(0,1200);page.wait_for_timeout(2500)
+
 def normalize_video(a):
     vid = str(a.get('aweme_id') or '')
     if not re.fullmatch(r'\d{15,22}', vid): return None
@@ -126,8 +147,9 @@ def main():
                                 if observed:break
                                 page.wait_for_timeout(700)
                         finally:page.remove_listener('response',auth_response)
-                        logged=bool(observed)
-                        result=dict(ok=True,logged_in=logged,needs_login=not logged,message='登录有效，无需扫码' if logged else '尚未确认登录，请打开扫码窗口完成登录或验证')
+                        required=login_prompt(page);logged=bool(observed) and not required
+                        result=dict(ok=True,logged_in=logged,needs_login=required,error_code='' if logged else 'login_required' if required else 'auth_unconfirmed',
+                                    message='登录有效，无需扫码' if logged else '抖音尚未登录，请打开扫码窗口；旧收藏已保留' if required else '后台未能确认登录，可能是网络或页面验证；可重试检查')
                         atomic_json(private/'results'/f"{cmd['id']}.json",result)
                         state(status='ready' if logged else 'login_required',message=result['message'])
                     elif cmd.get('action')=='sync':
@@ -136,6 +158,12 @@ def main():
                         state(status='syncing',message='读取收藏页及分页；不修改抖音收藏')
                         page.goto('https://www.douyin.com/user/self?showTab=favorite_collection',wait_until='domcontentloaded',timeout=60000)
                         page.wait_for_timeout(3500)
+                        if not favorite_order and login_prompt(page):
+                            active=False
+                            result=dict(ok=False,error_code='login_required',needs_login=True,message='抖音尚未登录，请扫码登录后刷新；旧收藏已保留',
+                                        videos=[],folders=[],membership=[],favorite_order=[],complete=False,folders_complete=False)
+                            atomic_json(private/'results'/f"{cmd['id']}.json",result)
+                            state(status='login_required',message=result['message']);continue
                         # Use rendered UI, never synthesize signed private API requests.
                         for label in ('收藏','收藏作品'):
                             loc=page.get_by_text(label,exact=True)
@@ -155,7 +183,8 @@ def main():
                             state(status='syncing',message=f'已读取 {now} 个收藏，正在检查分页',count=now)
                             idle=idle+1 if now==previous else 0;previous=now
                             if pagination.get('all',{}).get('has_more') in (0,False) and videos: break
-                            if idle>=8: break
+                            if idle in (4,8,12):retry_collection_scroll(page)
+                            if idle>=16: break
                         # Load folders only AFTER reaching the end of the main video collection.
                         folder_selector=page.get_by_text('收藏夹',exact=True)
                         if folder_selector.count():

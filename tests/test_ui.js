@@ -22,4 +22,21 @@ test('search composes with saved status and view',()=>{elements.search.value='�
 test('image posts can enqueue; local view separated',()=>{assert.equal(get('eligible(state.videos[4])'),true);vm.runInContext("view='local'",context);assert.equal(get('visible().length'),5)});
 test('pagination renders thirty and preserves exact slices',()=>{vm.runInContext('pageNumber=1',context);const ids=Array.from({length:65},(_,i)=>i);context.pageFixture=ids;assert.deepEqual(get('pageSlice(pageFixture)'),ids.slice(0,30));vm.runInContext('pageNumber=2',context);assert.deepEqual(get('pageSlice(pageFixture)'),ids.slice(30,60));vm.runInContext('pageNumber=3',context);assert.deepEqual(get('pageSlice(pageFixture)'),ids.slice(60))});
 test('filter shrink and empty result clamp page safely',()=>{assert.deepEqual(get('pageSlice([1,2])'),[1,2]);assert.equal(get('pageNumber'),1);vm.runInContext('pageNumber=99',context);assert.deepEqual(get('pageSlice([])'),[]);assert.equal(get('pageNumber'),1)});
+test('explicit login failure offers login instead of generic error',()=>{const n=get("syncNotice({error_code:'login_required'},{logged_in:false},165)");assert.equal(n.needsLogin,true);assert.match(n.message,/165/);assert.match(n.message,/尚未登录/)});
+test('confirmed login does not keep stale login prompt',()=>{const n=get("syncNotice({error_code:'login_required'},{logged_in:true},165)");assert.equal(n.needsLogin,false);assert.match(n.message,/登录已确认/)});
+test('network failure is not called login expiry',()=>{const n=get("syncNotice({error_code:'read_failed'},{logged_in:false,error_code:'auth_check_failed'},165)");assert.equal(n.needsLogin,false);assert.doesNotMatch(n.message,/尚未登录/)});
+test('brand ink optical center ignores transparent canvas and dark background',()=>{
+ const pixels=new Uint8ClampedArray(8*4);for(let x=0;x<8;x++)pixels[x*4+3]=255;
+ for(const x of [2,3,4])for(let c=0;c<3;c++)pixels[x*4+c]=255;
+ context.brandPixels=Array.from(pixels);assert.equal(get('brandInkShift(brandPixels,8,1)'),.0625);
+});
+test('symmetric light ink stays centered and empty branding stays safe',()=>{
+ context.brandPixels=Array.from({length:8*4},(_,i)=>[2,5].includes(Math.floor(i/4))?255:0);
+ assert.ok(Math.abs(get('brandInkShift(brandPixels,8,1)'))<1e-10);
+ assert.equal(get('brandInkShift(new Array(32).fill(0),8,1)'),0);
+});
+test('unbalanced branding cannot shift out of its logo slot',()=>{
+ context.brandPixels=Array.from({length:8*4},(_,i)=>i<4?255:0);
+ assert.equal(get('brandInkShift(brandPixels,8,1)'),.12);
+});
 console.log(passed+' frontend logic tests passed.');

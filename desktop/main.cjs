@@ -2,6 +2,7 @@ const {app,BrowserWindow,Tray,Menu,dialog,ipcMain,shell,nativeImage} = require('
 const fs=require('node:fs'),path=require('node:path'),net=require('node:net'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');
 const {trusted,safeExternal,loadConfig,saveConfig,request}=require('./platform.cjs');
+const {brandFile}=require('./branding.cjs');
 if(process.env.WORKDESK_HOME)app.setPath('userData',path.resolve(process.env.WORKDESK_HOME));
 const home=app.getPath('userData');
 const setupURL=require('node:url').pathToFileURL(path.join(__dirname,'setup.html')).href;
@@ -21,16 +22,18 @@ function runtime(){return app.isPackaged?path.join(process.resourcesPath,'runtim
 function python(){return process.env.WORKDESK_PYTHON || path.join(runtime(),process.platform==='win32'?'python.exe':'bin/python3')}
 function fail(e){fs.mkdirSync(home,{recursive:true});fs.appendFileSync(path.join(home,'desktop.log'),`${new Date().toISOString()} ${e.message}\n`);dialog.showErrorBox('Workdesk',`${e.message}\n已有私人数据保留。`)}
 async function create(){
+  const defaultIcon=path.join(__dirname,'../assets/icon.png');
+  let icon=nativeImage.createFromPath(brandFile(home,defaultIcon));
+  if(icon.isEmpty())icon=nativeImage.createFromPath(defaultIcon);
   window=new BrowserWindow({width:1440,height:920,minWidth:800,minHeight:560,title:'Workdesk · 个人工作台',backgroundColor:'#141414',
     titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:{color:'#141414',symbolColor:'#c8c8c8',height:40}}:{}),
-    icon:path.join(__dirname,'../assets/app.ico'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,devTools:false}});
+    icon,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,devTools:false}});
   window.on('close',e=>{if(!quitting){e.preventDefault();window.hide()}});
   window.webContents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));
   window.webContents.session.setPermissionCheckHandler(()=>false);
   window.webContents.session.on('will-download',e=>e.preventDefault());
   window.webContents.on('will-navigate',(e,url)=>{if(url===setupURL || (origin&&trusted(url,origin)))return;e.preventDefault();if(safeExternal(url))shell.openExternal(url)});
   window.webContents.setWindowOpenHandler(({url})=>{if(safeExternal(url))shell.openExternal(url);return {action:'deny'}});
-  let icon=nativeImage.createFromPath(path.join(__dirname,'../assets/icon.png'));
   tray=new Tray(icon.resize({width:20,height:20}));tray.setToolTip('Workdesk · 个人工作台');tray.on('double-click',show);
   tray.setContextMenu(Menu.buildFromTemplate([{label:'打开工作台',click:show},{label:'重新加载界面',click:()=>{show();window.webContents.reload()}},
     {label:'设置',click:async()=>{show();if(await idle())await window.loadURL(setupURL);else dialog.showMessageBox(window,{message:'有任务或后台操作，完成后再修改设置。'})}},

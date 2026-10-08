@@ -16,6 +16,8 @@ output/
 **/*.db
 **/*.jsonl
 **/config.json
+**/homepage.json
+**/snapshot.json
 **/appsettings.json
 **/auth.json
 **/*cookies*

@@ -3,7 +3,14 @@ from pathlib import Path
 from urllib.parse import quote
 
 from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDIAN
+from home import Homepage
 TERMINAL={'completed','skipped','cancelled'}
+HOME_CARDS=('status','next','focus','douyin','later')
+
+def home_order(value):
+    if not isinstance(value,list) or len(value)!=len(HOME_CARDS) or any(not isinstance(x,str) for x in value) or set(value)!=set(HOME_CARDS):
+        raise ValueError('首页布局必须包含全部卡片，且不能重复或加入未知卡片')
+    return value
 
 def today(): return datetime.date.today().isoformat()
 def read_json(p, default=None):
@@ -243,6 +250,7 @@ IMAGE_SCHEMA['properties']['evidence']['items']={
 class Service:
     def __init__(self,store=None,vault=VAULT,start_worker=True):
         self.vault=Path(vault);self.store=store or Store(ROOT/'data/state.sqlite3');self.bridge=BrowserBridge();self.stop=threading.Event();self.wake=threading.Event();self.sync_lock=threading.Lock();self.auth_lock=threading.Lock();self.write_lock=threading.Lock()
+        self.home=Homepage(self.vault,ROOT)
         self.import_local();self.refresh_notes()
         if start_worker:threading.Thread(target=self.worker,daemon=True).start()
     def import_local(self):
@@ -267,15 +275,18 @@ class Service:
                 if result.get('ok'):
                     self.store.set_setting('last_success_sync',json.dumps(safe,ensure_ascii=False))
                     self.store.set_setting('account',json.dumps(dict(logged_in=True,needs_login=False,message='登录有效',updated=time.time()),ensure_ascii=False))
-                else:safe=self.failed_sync(result.get('message','后台刷新未成功'))
+                else:
+                    safe=self.failed_sync(result.get('message','后台刷新未成功'),result.get('error_code'))
+                    if safe['error_code']=='login_required':
+                        self.store.set_setting('account',json.dumps(dict(logged_in=False,needs_login=True,error_code='login_required',message='抖音尚未登录，请扫码登录后刷新',updated=time.time()),ensure_ascii=False))
                 self.store.set_setting('sync_result',json.dumps(safe,ensure_ascii=False))
             except Exception as e:self.store.set_setting('sync_result',json.dumps(self.failed_sync(str(e)),ensure_ascii=False))
             finally:self.sync_lock.release()
         threading.Thread(target=run,daemon=True).start()
-    def failed_sync(self,message):
+    def failed_sync(self,message,error_code=None):
         old=json.loads(self.store.setting('last_success_sync',self.store.setting('sync_result','{}')))
         count=self.store.rows('SELECT count(*) AS n FROM videos WHERE favorite=1')[0]['n']
-        return dict(ok=False,message='刷新未成功，已保留收藏。可重试或在更多中检查登录。',detail=message,
+        return dict(ok=False,error_code=error_code or 'read_failed',message='抖音尚未登录，请扫码登录后刷新；旧收藏已保留' if error_code=='login_required' else '刷新未成功，已保留收藏。可重试或在更多中检查登录。',detail=message,
                     count=count,complete=bool(old.get('complete')),folders_complete=bool(old.get('folders_complete')),
                     updated=time.time(),last_success_updated=old.get('updated'))
     def check_login(self):
@@ -283,9 +294,9 @@ class Service:
         def run():
             try:
                 result=self.bridge.request('check_login',timeout=75)
-                if not result.get('ok'):result=dict(logged_in=False,needs_login=True,message='后台检查未成功，收藏保留；可重试或打开扫码窗口')
+                if not result.get('ok'):result=dict(logged_in=False,needs_login=False,error_code='auth_check_failed',message='后台检查未成功，收藏已保留；请重试检查，不代表登录已失效')
                 result['updated']=time.time();self.store.set_setting('account',json.dumps(result,ensure_ascii=False))
-            except Exception:self.store.set_setting('account',json.dumps(dict(logged_in=False,needs_login=True,message='登录检查未成功；收藏已保留',updated=time.time()),ensure_ascii=False))
+            except Exception:self.store.set_setting('account',json.dumps(dict(logged_in=False,needs_login=False,error_code='auth_check_failed',message='登录检查未成功；收藏已保留，不代表登录已失效',updated=time.time()),ensure_ascii=False))
             finally:self.auth_lock.release()
         threading.Thread(target=run,daemon=True).start()
     def snapshot(self):
@@ -295,7 +306,10 @@ class Service:
         return dict(videos=videos,jobs=jobs,folders=self.store.rows('SELECT * FROM folders ORDER BY name'),membership=self.store.rows('SELECT * FROM membership'),
                     browser=read_json(PRIVATE/'browser-state.json',dict(status='closed')),sync=json.loads(self.store.setting('sync_result','{}')),
                     syncing=self.sync_lock.locked(),authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
-                    paused=self.store.setting('paused','1')=='1',topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
+                     paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
+    def card_order(self):
+        try:return home_order(json.loads(self.store.setting('home_card_order','[]')))
+        except (ValueError,TypeError):return list(HOME_CARDS)
     def update_job(self,jid,**kw):
         kw['updated']=time.time();self.store.execute('UPDATE jobs SET '+','.join(k+'=?' for k in kw)+' WHERE id=?',(*kw.values(),jid))
     def run_command(self,args,logfile,timeout=900,stdin=None):
@@ -388,9 +402,6 @@ class Service:
         import jsonschema
         m=read_json(d/'meta.json',{});is_images=m.get('kind')=='images'
         image_index=image_manifest(d) if is_images else None
-        if not is_images:
-            from components import ensure_decoder
-            ensure_decoder(run/'components.log')
         modelpath=run/'analysis.json'
         verified=run/'verified-analysis.json'
         if verified.exists():
@@ -545,6 +556,10 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
         d=self.ensure_images(vid,run) if item['kind']=='images' else self.ensure_media(vid,run)
         if self.cancelled(jid):self.update_job(jid,status='cancelled',message='已在阶段边界取消');return
         if read_json(d/'meta.json',{}).get('kind')!='images':
+            self.update_job(jid,stage='components',message='检查本机视频解码组件；首次使用按需安装')
+            from components import ensure_decoder
+            ensure_decoder(run/'components.log')
+            if self.cancelled(jid):self.update_job(jid,status='cancelled',message='已在阶段边界取消');return
             self.update_job(jid,stage='transcribe',message='本地ASR，不调用付费API')
             self.run_command([PYTHON,SCRIPTS/'douyin_pipeline.py','transcribe',vid,'--outdir',d],run/'transcribe.log',timeout=1800)
             self.update_job(jid,stage='frames',message='抽取带时间戳的代表画面')
@@ -575,9 +590,15 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
                 self.update_job(j['id'],status='failed',message=str(e)[:400])
                 if self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage']=='gpt':self.store.set_setting('paused','1')
     def action(self,name,payload):
-        if name=='open_note':
+        if name=='home_layout':
+            order=home_order(payload.get('order'))
+            self.store.set_setting('home_card_order',json.dumps(order))
+            return dict(ok=True,order=order)
+        if name in ('open_note','open_home_note'):
             # Resolve only an existing workbench record, never a caller-supplied file path.
-            if payload.get('job'):
+            if name=='open_home_note':
+                note=self.home.reference(str(payload.get('source','')))
+            elif payload.get('job'):
                 rows=self.store.rows('SELECT note FROM jobs WHERE id=?',(str(payload['job']),))
                 note=rows[0]['note'] if rows else ''
             elif payload.get('video'):
@@ -588,7 +609,8 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             path=(self.vault/note).resolve()
             try:rel=path.relative_to(self.vault.resolve())
             except ValueError:raise ValueError('笔记路径不在当前知识库内')
-            if rel.parts[0] not in ('处理文件','原始资料') or path.suffix!='.md' or not path.is_file():
+            allowed=('处理文件','输出文件') if name=='open_home_note' else ('处理文件','原始资料')
+            if rel.parts[0] not in allowed or path.suffix!='.md' or not path.is_file():
                 raise ValueError('笔记不存在或不是可打开的入库笔记；请重新检查入库状态')
             logfile=ROOT/'data/open-note.log'
             self.run_command([OBSIDIAN,f'vault={self.vault.name}','open',f'path={rel.as_posix()}'],logfile,timeout=30)
@@ -614,6 +636,10 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             if not ids or len(ids)>20:raise ValueError('每批请选择1-20条视频')
             result=self.store.enqueue(ids);self.store.set_setting('paused','0');self.wake.set();return dict(ok=True,**result)
         if name=='pause':self.store.set_setting('paused','1');return dict(ok=True)
+        if name=='navigation_motion':
+            mode=payload.get('mode')
+            if mode not in ('system','on','off'):raise ValueError('请选择跟随系统、适度动效或关闭动效')
+            self.store.set_setting('navigation_motion',mode);return dict(ok=True)
         if name=='resume':self.store.set_setting('paused','0');self.wake.set();return dict(ok=True)
         if name in ('retry','place','cancel'):
             rows=self.store.rows('SELECT * FROM jobs WHERE id=?',(payload.get('id'),))

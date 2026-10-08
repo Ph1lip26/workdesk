@@ -16,8 +16,13 @@ their installed *.dist-info license directories remain intact.
   Upstream build/source: https://github.com/PyAV-Org/pyav-ffmpeg .
 - faster-whisper: https://github.com/SYSTRAN/faster-whisper/blob/master/LICENSE
 - Lucide icons: original files, license and source checksums are in
-  backend/static/icons/. Icons retain their original geometry. The desktop icon
-  uses the Lucide layout-dashboard icon over a neutral background.
+  backend/static/icons/. Icons retain their original geometry; navigation motion
+  only composes these existing shapes through transforms and opacity.
+
+The default desktop mark is a generic letter W rendered from a system font;
+no font files or racing-team assets are redistributed. Optional private PNG
+branding belongs to the user-selected rights holder, stays outside the public
+package, and does not imply affiliation or a redistribution license.
 
 No personal media, cookies, account authorizations, ASR model weights or API keys
 are distributed. Whisper model weights are downloaded separately on demand from

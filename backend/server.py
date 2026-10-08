@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs,quote
 from core import Service, ROOT, BUNDLE
+from branding import brand_png
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=8767);a=p.parse_args()
@@ -25,11 +26,13 @@ def main():
                 page=(BUNDLE/'static/index.html').read_text(encoding='utf-8').replace('__TOKEN__',token)
                 self.send(200,page,'text/html; charset=utf-8')
             elif path=='/health':self.send(200,dict(ok=True,service='workdesk',instance=os.environ.get('WORKDESK_INSTANCE','')))
-            elif path=='/favicon.ico':self.send(204,b'','image/x-icon')
+            elif path in ('/brand.png','/favicon.ico'):
+                self.send(200,brand_png(ROOT,'mark.png' if path=='/brand.png' else 'icon.png',BUNDLE/'static/brand.png'),'image/png')
             elif path=='/api/state':self.send(200,service.snapshot())
+            elif path=='/api/home':self.send(200,service.home.snapshot())
             elif path=='/api/preview':
                 jid=parse_qs(urlparse(self.path).query).get('id',[''])[0];rows=service.store.rows('SELECT result FROM jobs WHERE id=?',(jid,));self.send(200,json.loads(rows[0]['result']) if rows and rows[0]['result'] else {})
-            elif path in ('/app.js','/style.css'):
+            elif path in ('/app.js','/home.js','/style.css'):
                 self.send(200,(BUNDLE/'static'/path[1:]).read_bytes(),'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
             else:self.send(404,dict(error='不存在'))
         def do_POST(self):

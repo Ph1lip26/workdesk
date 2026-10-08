@@ -1,0 +1,45 @@
+async (page) => {
+ const checks=[],errors=[];
+ const check=(name,value)=>{if(!value)throw Error(name);checks.push(name)};
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(page.url().split('#')[0]+'#douyin');await page.reload();await page.locator('.card').first().waitFor();
+ check('synthetic fixture only',await page.locator('.card').first().getAttribute('data-id')==='1000000000000000001');
+ await page.setViewportSize({width:960,height:720});await page.emulateMedia({reducedMotion:'reduce'});
+ await page.evaluate(async()=>{await api('navigation_motion',{mode:'system'});await refresh()});await page.waitForTimeout(350);
+ check('system follows reduced motion',await page.evaluate(()=>getComputedStyle(document.getElementById('modulepanel')).transitionDuration==='0s'&&!navigationMotionEnabled()));
+ await page.locator('#toolsopen').click();await page.locator('#navigationmotion').selectOption('on');
+ await page.waitForFunction(()=>document.body.dataset.navigationMotion==='on');
+ check('explicit opt-in survives reduced motion',await page.evaluate(()=>navigationMotionEnabled()&&getComputedStyle(document.getElementById('modulepanel')).transitionDuration!=='0s'));
+ check('unrelated motion still respects system',await page.evaluate(()=>getComputedStyle(document.querySelector('.cover img')||document.querySelector('.cover')).transitionDuration==='0s'));
+ await page.locator('#closetools').click();
+ if(await page.locator('#navtoggle').getAttribute('aria-expanded')==='true'){await page.locator('#navtoggle').click();await page.waitForTimeout(350)}
+ await page.locator('#douyinmodule').click();await page.waitForTimeout(50);
+ const moving=await page.evaluate(()=>{const p=document.getElementById('modulepanel'),r=p.getBoundingClientRect();return {left:r.left,right:r.right,heading:+getComputedStyle(document.querySelector('.panel-heading')).opacity,menu:+getComputedStyle(document.querySelector('.panel-nav')).opacity,frame:getComputedStyle(document.querySelector('#navtoggle svg')).transform,inert:p.inert}});
+ check('panel slides inside attached rail host',moving.left<72&&moving.right>72);
+ check('menu content follows heading',moving.heading>=moving.menu&&moving.heading<1);
+ check('outer icon frame does not flip',moving.frame==='none');
+ check('open navigation is not inert or modal',!moving.inert&&await page.locator('dialog:modal').count()===0);
+ check('mounted cards stay visible throughout reflow',await page.evaluate(()=>document.querySelectorAll('.card').length===30&&[...document.querySelectorAll('.card')].every(c=>+getComputedStyle(c).opacity===1)));
+ await page.screenshot({path:'output/playwright/navigation-open-mid.png'});
+ await page.waitForTimeout(750);
+ check('panel settles against rail',await page.evaluate(()=>Math.abs(document.getElementById('modulepanel').getBoundingClientRect().left-72)<1));
+ check('both primary controls share state',await page.evaluate(()=>document.getElementById('douyinmodule').getAttribute('aria-expanded')===document.getElementById('navtoggle').getAttribute('aria-expanded')));
+ check('menu is fully legible after expansion',await page.evaluate(()=>getComputedStyle(document.querySelector('.panel-nav')).opacity==='1'));
+ await page.locator('#douyinmodule').click();await page.waitForTimeout(50);
+ check('closing panel is still visibly sliding',await page.evaluate(()=>{const r=document.getElementById('modulepanel').getBoundingClientRect();return r.left<72&&r.right>72}));
+ check('closing panel is immediately keyboard inert',await page.locator('#modulepanel').getAttribute('inert')!==null);
+ await page.waitForTimeout(350);
+ check('official chevron alone reverses direction',await page.evaluate(()=>new DOMMatrixReadOnly(getComputedStyle(document.querySelector('#navtoggle svg path:last-child')).transform).m11<-.99&&getComputedStyle(document.querySelector('#navtoggle svg')).transform==='none'));
+ check('scrollbar frame remains at viewport edge',await page.evaluate(()=>Math.abs(document.querySelector('.workspace').getBoundingClientRect().right-innerWidth)<1));
+ for(let n=0;n<3;n++){await page.locator('#navtoggle').click();await page.waitForTimeout(45)}await page.waitForTimeout(800);
+ check('rapid reversal settles in final open state',await page.evaluate(()=>document.getElementById('navtoggle').getAttribute('aria-expanded')==='true'&&!document.body.classList.contains('nav-moving')&&Math.abs(document.getElementById('modulepanel').getBoundingClientRect().left-72)<1));
+ await page.reload();await page.waitForFunction(()=>document.body.dataset.navigationMotion==='on');
+ check('preference persists across reload',await page.locator('#navigationmotion').inputValue()==='on');
+ await page.locator('#toolsopen').click();await page.locator('#navigationmotion').selectOption('off');await page.waitForFunction(()=>document.body.dataset.navigationMotion==='off');
+ check('off disables both panel and icon transitions',await page.evaluate(()=>!navigationMotionEnabled()&&getComputedStyle(document.getElementById('modulepanel')).transitionDuration==='0s'&&getComputedStyle(document.querySelector('#navtoggle svg path:last-child')).transitionDuration==='0s'));
+ await page.locator('#navigationmotion').selectOption('system');await page.waitForFunction(()=>document.body.dataset.navigationMotion==='system');await page.locator('#closetools').click();
+ await page.emulateMedia({reducedMotion:'no-preference'});await page.waitForTimeout(100);
+ check('system animations resume when OS preference changes',await page.evaluate(()=>navigationMotionEnabled()&&getComputedStyle(document.getElementById('modulepanel')).transitionDuration!=='0s'));
+ check('no page errors',errors.length===0);
+ return {ok:true,checks:checks.length,moving,errors};
+}

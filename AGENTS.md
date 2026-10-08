@@ -2,7 +2,7 @@
 
 - 本项目只存通用代码、匿名图标与合成测试。用户知识库、个人路径、真实收藏 ID、账号、凭证、日志、模型记录、运行配置一律禁止提交。
 - 改前读现状；不要导入旧的私人项目 Git 历史。
-- 用户已要求每次代码更新同步到这个 GitHub 项目。每次完成更新必须 `npm test`、`python scripts/privacy_check.py --tracked`、检查 staged diff，再 commit/push。失败不要绕过门禁，不声称已同步。
+- 用户于 2026-10-06 修改发布节奏：日常修改只在本机验证，不自动 push、打 tag 或发布 Release；AI 判断已有阶段性成果后，先问用户要不要同步 GitHub，得到本次明确确认才上传。上传前必须 `npm test`、`python scripts/privacy_check.py --tracked`、检查 staged diff。失败不要绕过门禁，不声称已同步。
 - 正式版本同步更新版本号和 CHANGELOG；验证安装包和首次配置后打 tag、发布 installer + SHA256。不要把 CI 日志或私人截图上传 Release。
 - macOS 尚未交付；不得把跨平台架构当作已验证的 macOS 支持。
 - 保留程序与本机用户数据的分离。更新和卸载不删除用户数据；关闭窗口不打断任务。

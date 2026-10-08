@@ -3,6 +3,29 @@ const $=id=>document.getElementById(id);
 let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',toastTimer;
 const PAGE_SIZE=30;
 let pageNumber=1;
+// Same-origin, bounded raster branding. Light-ink centroid provides optical
+// alignment without changing the official geometry or storing brand metadata.
+function brandInkShift(pixels,width,height){
+ let weight=0,moment=0;
+ for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+  const i=(y*width+x)*4,w=pixels[i+3]*(pixels[i]*.2126+pixels[i+1]*.7152+pixels[i+2]*.0722);
+  weight+=w;moment+=(x+.5)*w;
+ }
+ return weight?Math.max(-.12,Math.min(.12,.5-moment/weight/width)):0;
+}
+function alignWorkspaceBrand(){
+ const image=document.querySelector('.workspace-logo');if(!image)return;
+ let shift=0;
+ const place=()=>{const paintedWidth=Math.max(image.clientWidth/image.naturalWidth,image.clientHeight/image.naturalHeight)*image.naturalWidth;
+  if(Number.isFinite(paintedWidth))image.style.setProperty('--brand-optical-x',(shift*paintedWidth).toFixed(3)+'px');};
+ const read=()=>{if(!image.naturalWidth)return;try{
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=128;
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,128,128);
+  shift=brandInkShift(ctx.getImageData(0,0,128,128).data,128,128);place();image.dataset.brandAligned='true';
+ }catch{image.style.setProperty('--brand-optical-x','0px')}};
+ image.addEventListener('load',read);if(image.complete)read();
+ if(typeof ResizeObserver!=='undefined')new ResizeObserver(place).observe(image);
+}
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const check="<svg data-lucide=\"check\" aria-hidden=\"true\" xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" ><path d=\"M20 6 9 17l-5-5\" /></svg>";
 const moreIcon="<svg data-lucide=\"ellipsis\" aria-hidden=\"true\" xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" ><circle cx=\"12\" cy=\"12\" r=\"1\" /><circle cx=\"19\" cy=\"12\" r=\"1\" /><circle cx=\"5\" cy=\"12\" r=\"1\" /></svg>";
@@ -13,6 +36,11 @@ const cleanTitle=s=>String(s||'未命名视频').replace(/\s*#[^\s#]*/g,'').trim
 function currentJob(id){return state.jobs.find(j=>j.video===id)}
 function videoState(v){if(saved(v))return {key:'done',label:'已入库'};const j=currentJob(v.id);if(j&&['queued','running','needs_review'].includes(j.status))return {key:'pending',label:labels[j.status]};if(j?.status==='failed')return {key:'failed',label:'处理失败'};return {key:'new',label:'未入库'}}
 function eligible(v){const j=currentJob(v.id);return !v.note&&(!j||!['queued','running','needs_review'].includes(j.status))}
+function syncNotice(sync,account,count){
+ const loginFailure=sync.error_code==='login_required'||account.error_code==='login_required';
+ const needsLogin=loginFailure&&account.logged_in!==true;
+ return {needsLogin,message:needsLogin?'抖音尚未登录，已保留 '+count+' 条收藏。':loginFailure?'登录已确认，已保留 '+count+' 条收藏。请刷新收藏更新列表。':'刷新未成功，已保留 '+count+' 条收藏。可重试或检查登录。'};
+}
 const workURL=v=>'https://www.douyin.com/'+(v.kind==='images'?'note/':'video/')+v.id;
 function scopeItems(){const q=$('search').value.trim().toLowerCase(),members=folder?new Set(state.membership.filter(m=>m.folder===folder).map(m=>m.video)):null;return state.videos.filter(v=>{if(members&&!members.has(v.id))return false;if(!members&&view==='favorites'&&!v.favorite)return false;return !q||(v.title+' '+v.author).toLowerCase().includes(q)})}
 function compareIDs(a,b){return a.id.length===b.id.length?b.id.localeCompare(a.id):b.id.length-a.id.length}
@@ -38,12 +66,14 @@ function renderNavigation(){
  $('viewcontext').textContent=folder?'抖音收藏 / 收藏夹':'抖音收藏';
 }
 function selectSource(value){
+ if(typeof selectModule==='function'&&currentModule!=='douyin')selectModule('douyin',{animate:false});
  folder=value.startsWith('folder:')?value.slice(7):'';view=folder?'favorites':value;pageNumber=1;
  // Search and status remain explicit user filters when changing the source.
  render();closeCompactNavigation();
  $('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
 }
 function render(){
+ updateNavigationMotion(state.navigation_motion);
  renderNavigation();
  const allItems=visible(),items=pageSlice(allItems),scoped=scopeItems(),sync=state.sync||{},account=state.account||{},count=state.videos.filter(v=>v.favorite).length;
  const pages=Math.max(1,Math.ceil(allItems.length/PAGE_SIZE));
@@ -60,7 +90,8 @@ function render(){
  $('sync').disabled=state.syncing;$('sync').querySelector('span').textContent=state.syncing?'刷新中':'刷新收藏';
  document.body.classList.toggle('is-syncing',Boolean(state.syncing));$('sync').setAttribute('aria-busy',String(Boolean(state.syncing)));
  $('notice').hidden=!(sync.updated&&sync.ok===false);
- $('connection').textContent='刷新未成功，已保留 '+count+' 条收藏。可重试或检查登录。';
+ const notice=syncNotice(sync,account,count);$('connection').textContent=notice.message;
+ $('notice-login').hidden=!notice.needsLogin;$('notice-login').disabled=Boolean(state.syncing||state.authchecking);$('notice-detail').hidden=notice.needsLogin;
  $('account-status').textContent=state.authchecking?'正在后台检查登录…':account.message||'刷新和检查登录在后台进行，无需反复扫码。';
  $('login').disabled=state.authchecking||state.syncing;
  $('login').classList.toggle('is-loading',Boolean(state.authchecking));$('login').setAttribute('aria-busy',String(Boolean(state.authchecking)));
@@ -71,6 +102,7 @@ function render(){
  const openMenus=new Set([...document.querySelectorAll('.card-menu[open]')].map(e=>e.closest('.card').dataset.id));
  const cardsKey=JSON.stringify([pageNumber,$('sort').value,items,items.map(v=>[videoState(v),eligible(v)]),items.length?null:[view,folder,$('search').value,$('status').value]]);
  if(cardsKey!==cardFingerprint){
+ if(navigationReflow)stopNavigationAnimation();
  $('cards').innerHTML=items.length?items.map(v=>{
    const status=videoState(v),title=cleanTitle(v.title),cover=/^https:\/\//.test(v.cover||'')?'<img src="'+esc(v.cover)+'" loading="lazy" referrerpolicy="no-referrer" alt="'+esc(title)+'的封面">':'<span class="placeholder">暂无封面</span>';
    const tip=v.note?'已有知识笔记':v.raw?'已有原始资料，可继续生成知识笔记':v.kind==='images'?'选择图文：逐张识别原图并生成笔记':status.label;
@@ -86,46 +118,159 @@ function render(){
  }
  const candidates=items.filter(eligible),selectedVisible=candidates.filter(v=>selection.has(v.id)).length;
  $('selectall').disabled=!candidates.length;$('selectall').checked=candidates.length>0&&selectedVisible===candidates.length;$('selectall').indeterminate=selectedVisible>0&&selectedVisible<candidates.length;
- $('selectionbar').hidden=!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=!selection.size;
+ $('selectionbar').hidden=document.body.dataset.module!=='douyin'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=!selection.size;
  $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>state.videos.find(v=>v.id===id)?.raw)?'生成知识笔记':'加入知识库';
  $('jobs').innerHTML=state.jobs.length?state.jobs.map(j=>{const v=state.videos.find(v=>v.id===j.video),badge=['completed','skipped'].includes(j.status)?'done':j.status==='failed'?'failed':'pending';return '<div class="job"><span class="badge '+badge+'">'+(badge==='done'?check:'')+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(cleanTitle(v?.title||j.video))+'</p><p class="job-message">'+esc(j.message)+'</p>'+(j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+(j.status==='needs_review'?'<select data-topic="'+j.id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+state.topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+'<div class="job-actions">'+(j.note?'<a data-open-job="'+j.id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+(['failed','cancelled'].includes(j.status)?'<button data-retry="'+j.id+'">重试</button>':'')+(j.status==='needs_review'?'<button data-place="'+j.id+'">确认归类</button>':'')+(!['completed','skipped','cancelled'].includes(j.status)?'<button data-cancel="'+j.id+'">取消</button>':'')+'<button data-preview="'+j.id+'">查看草稿</button></div></div>'}).join(''):'<p class="queue-empty">没有待处理的视频。</p>';
 }
-async function refresh(){if(busy)return;busy=true;try{state=await api('state');for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!eligible(v))selection.delete(id)}const next=JSON.stringify(state);if(next!==fingerprint&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next}}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。'}finally{busy=false}}
+async function refresh(){if(busy)return;busy=true;try{state=await api('state');for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!eligible(v))selection.delete(id)}const next=JSON.stringify(state);if(next!==fingerprint&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。'}finally{busy=false}}
 $('source').onchange=()=>selectSource($('source').value);
 $('modulepanel').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(button&&state)selectSource(button.dataset.source)});
 const compactNavigation=matchMedia('(max-width:1100px)');
+const reducedNavigationMotion=matchMedia('(prefers-reduced-motion:reduce)');
 let panelCollapsed=false,compactPanelOpen=false;
+let navigationAnimations=[];
+let navigationReflow=null,navigationGeneration=0;
+const railGlyphAnimations=new Map();
+function setRailGlyphState(expanded){
+ const toggle=$('navtoggle'),module=$('douyinmodule');
+ const changed=module.getAttribute('aria-expanded')!==String(expanded);
+ if(!changed){toggle.setAttribute('aria-expanded',String(expanded));return}
+ const pieces=[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child'),toggle.querySelector('svg path:last-child')];
+ // Read the visible mid-flight state before cancelling: rapid reversal never
+ // snaps to the previous endpoint. Only transforms/opacity are animated.
+ const before=pieces.map(el=>({transform:getComputedStyle(el).transform,opacity:getComputedStyle(el).opacity}));
+ railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();
+ toggle.setAttribute('aria-expanded',String(expanded));module.setAttribute('aria-expanded',String(expanded));
+ if(!changed||!navigationMotionEnabled())return;
+ pieces.forEach((el,i)=>{
+  const end={transform:getComputedStyle(el).transform,opacity:getComputedStyle(el).opacity};
+  const animation=el.animate([before[i],end],{duration:i<2?(expanded?440:360):280,delay:[0,0,25,45,0][i],fill:'both',easing:'cubic-bezier(.16,1,.3,1)'});
+  railGlyphAnimations.set(el,animation);
+  animation.finished.then(()=>{if(railGlyphAnimations.get(el)===animation){railGlyphAnimations.delete(el);animation.cancel()}}).catch(()=>{});
+ });
+}
+function navigationMotionEnabled(){
+ const mode=document.body.dataset.navigationMotion||'system';
+ return mode==='on'||(mode!=='off'&&!reducedNavigationMotion.matches);
+}
+function updateNavigationMotion(mode){
+ mode=['system','on','off'].includes(mode)?mode:'system';
+ if(document.body.dataset.navigationMotion!==mode){
+   stopNavigationAnimation();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();document.body.dataset.navigationMotion=mode;
+  document.documentElement.dataset.navigationMotion=mode;
+ }
+ $('navigationmotion').value=mode;
+}
+function stopNavigationAnimation(){
+ navigationGeneration++;
+ const pending=navigationReflow;navigationReflow=null;
+ navigationAnimations.forEach(animation=>animation.cancel());navigationAnimations=[];
+ pending?.restore();
+ document.body.classList.remove('nav-moving');
+}
+function gridColumnCount(){
+ const value=getComputedStyle($('cards')).gridTemplateColumns;
+ return value==='none'?0:value.split(/\s+/).length;
+}
+function transitionNavigation(change){
+ const workspace=document.querySelector('.workspace'),grid=$('cards');
+ const before=workspace.getBoundingClientRect(),gridBefore=grid.getBoundingClientRect();
+ const nodes=document.body.dataset.module==='douyin'?[...grid.querySelectorAll(':scope>.card')]:[];
+ // Capture the actual displayed geometry, including an interrupted transition.
+ // The same nodes stay mounted; no screenshot, opacity hand-off or grid zoom.
+ const starts=nodes.map(card=>({card,rect:card.getBoundingClientRect()}));
+ const scroll=workspace.scrollTop,edge=before.top+20;
+ const anchor=starts.find(x=>x.rect.bottom>edge);
+ stopNavigationAnimation();change();
+ if(!navigationMotionEnabled()||typeof workspace.animate!=='function')return;
+ const after=workspace.getBoundingClientRect();
+ if(Math.abs(before.left-after.left)<1)return;
+ const gridAfter=grid.getBoundingClientRect(),ends=nodes.map(card=>card.getBoundingClientRect());
+ const generation=navigationGeneration,duration=560,easing='cubic-bezier(.22,1,.36,1)';
+ const options={duration,easing,fill:'both'};
+ const originalGridStyle=grid.getAttribute('style'),styles=nodes.map(card=>card.getAttribute('style'));
+ const scrollEnd=anchor&&scroll>0?Math.max(0,scroll+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
+ let scrollFrame=0,userScrolled=false;
+ const manualScroll=()=>{userScrolled=true};
+ workspace.addEventListener('wheel',manualScroll,{passive:true});workspace.addEventListener('pointerdown',manualScroll,{passive:true});
+ const restore=()=>{
+  cancelAnimationFrame(scrollFrame);workspace.removeEventListener('wheel',manualScroll);workspace.removeEventListener('pointerdown',manualScroll);
+  grid.style.cssText=originalGridStyle||'';
+  nodes.forEach((card,i)=>{card.style.cssText=styles[i]||''});
+ };
+ navigationReflow={restore};document.body.classList.add('nav-moving');
+ const frame=left=>({marginLeft:left+'px',width:'calc(100% - '+left+'px)'});
+ const slide=workspace.animate([frame(before.left),frame(after.left)],options);
+ navigationAnimations=[slide];
+ if(nodes.length){
+  grid.style.position='relative';grid.style.display='block';grid.style.height=gridAfter.height+'px';
+  navigationAnimations.push(grid.animate([{height:gridBefore.height+'px'},{height:gridAfter.height+'px'}],options));
+  starts.forEach(({card,rect},i)=>{
+   card.style.position='absolute';card.style.margin='0';
+   const box=(r,g)=>({left:(r.left-g.left)+'px',top:(r.top-g.top)+'px',width:r.width+'px',height:r.height+'px'});
+   navigationAnimations.push(card.animate([box(rect,gridBefore),box(ends[i],gridAfter)],options));
+  });
+ }
+ // Preserve the first visible work when opening the panel far down the list.
+ if(scrollEnd!==scroll){
+  const started=performance.now(),ease=t=>1-Math.pow(1-t,4);
+  const track=now=>{if(generation!==navigationGeneration||userScrolled)return;const t=Math.min(1,(now-started)/duration);workspace.scrollTop=scroll+(scrollEnd-scroll)*ease(t);if(t<1)scrollFrame=requestAnimationFrame(track)};
+  scrollFrame=requestAnimationFrame(track);
+ }
+ Promise.all(navigationAnimations.map(a=>a.finished)).then(()=>{
+  if(generation!==navigationGeneration)return;
+  navigationAnimations.forEach(a=>a.cancel());navigationAnimations=[];restore();navigationReflow=null;
+  if(!userScrolled)workspace.scrollTop=scrollEnd;
+  document.body.classList.remove('nav-moving');
+ }).catch(()=>{});
+}
 function updateNavigationLayout(){
  // One persistent panel, never moved into a modal/top layer.
+ stopNavigationAnimation();
  if(compactNavigation.matches&&$('modulepanel').contains(document.activeElement))$('navtoggle').focus({preventScroll:true});
  compactPanelOpen=false;
  document.body.classList.toggle('panel-collapsed',!compactNavigation.matches&&panelCollapsed);
  updateNavigationToggle();
 }
 function updateNavigationToggle(){
- const expanded=compactNavigation.matches?compactPanelOpen:!panelCollapsed;
- document.body.classList.toggle('nav-open',compactNavigation.matches&&compactPanelOpen);
+ const home=document.body.dataset.module==='home';
+ const expanded=!home&&(compactNavigation.matches?compactPanelOpen:!panelCollapsed);
+ document.body.classList.toggle('nav-open',!home&&compactNavigation.matches&&compactPanelOpen);
+ $('panelhost').hidden=home;$('navtoggle').hidden=home;
  $('modulepanel').inert=!expanded;
  $('modulepanel').setAttribute('aria-hidden',String(!expanded));
- $('navtoggle').setAttribute('aria-expanded',String(expanded));
+ setRailGlyphState(expanded);
+ document.body.dataset.navigationExpanded=String(expanded);
+ $('douyinmodule').setAttribute('aria-label',document.body.dataset.module==='douyin'?(expanded?'抖音收藏，收起导航':'抖音收藏，展开导航'):'打开抖音收藏');
+ $('homemodule').removeAttribute('aria-expanded');
+ $('homemodule').setAttribute('aria-label',home?'首页，当前模块':'打开首页');
  $('navtoggle').setAttribute('aria-label',expanded?'收起导航':'展开导航');$('navtoggle').title=expanded?'收起导航':'展开导航';
 }
 function closeCompactNavigation(restoreFocus=false){
  if(!compactNavigation.matches||!compactPanelOpen)return;
  if(restoreFocus)$('navtoggle').focus({preventScroll:true});
- compactPanelOpen=false;updateNavigationToggle();
+ transitionNavigation(()=>{compactPanelOpen=false;updateNavigationToggle()});
 }
 function toggleNavigation(){
+ if(document.body.dataset.module==='home')return;
+ transitionNavigation(()=>{
  if(compactNavigation.matches)compactPanelOpen=!compactPanelOpen;
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
  updateNavigationToggle();
+ });
 }
 $('navtoggle').onclick=toggleNavigation;
 $('closenav').onclick=()=>closeCompactNavigation(true);
-$('douyinmodule').onclick=()=>{if(compactNavigation.matches)toggleNavigation();else if(panelCollapsed){panelCollapsed=false;document.body.classList.remove('panel-collapsed');updateNavigationToggle()}};
+$('douyinmodule').onclick=toggleNavigation;
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&compactPanelOpen&&!document.querySelector('dialog:modal')){e.preventDefault();closeCompactNavigation(true)}});
 document.addEventListener('click',e=>{if(!e.target.closest('#modulepanel,.module-rail,dialog')&&!document.querySelector('dialog:modal'))closeCompactNavigation()});
 compactNavigation.addEventListener('change',updateNavigationLayout);updateNavigationLayout();
+reducedNavigationMotion.addEventListener('change',()=>{if(!navigationMotionEnabled()){stopNavigationAnimation();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear()}});
+$('navigationmotion').onchange=async()=>{
+ const mode=$('navigationmotion').value;
+ const result=await action('navigation_motion',{mode});
+ if(result)updateNavigationMotion(mode);else $('navigationmotion').value=document.body.dataset.navigationMotion||'system';
+};
 const resetPage=()=>{pageNumber=1;if(state)render()};
 $('search').oninput=resetPage;$('status').onchange=resetPage;$('sort').onchange=resetPage;
 $('prevpage').onclick=()=>changePage(pageNumber-1);$('nextpage').onclick=()=>changePage(pageNumber+1);
@@ -138,6 +283,7 @@ document.addEventListener('change',e=>{const id=e.target.dataset.video;if(!id)re
 $('enqueue').onclick=async()=>{if(!confirm('为所选 '+selection.size+' 条作品生成知识笔记，会使用 Codex 额度。已有原始资料不重复保存，归类不明确时等待你选择。继续？'))return;const r=await action('enqueue',{ids:[...selection]});if(r){selection.clear();render();$('queuepanel').showModal();toast('已加入 '+r.added.length+' 条；跳过 '+r.skipped.length+' 条重复项')}};
 document.addEventListener('click',async e=>{const note=e.target.closest('[data-open-job],[data-open-video]');if(note){e.preventDefault();if(note.getAttribute('aria-busy')==='true')return;note.setAttribute('aria-busy','true');try{await api('open_note',note.dataset.openJob?{job:note.dataset.openJob}:{video:note.dataset.openVideo});toast('已在 Obsidian 打开笔记')}catch(err){toast(err.message)}finally{note.removeAttribute('aria-busy')}return}const elPage=e.target.closest('[data-page]');if(elPage){changePage(Number(elPage.dataset.page));return}const cover=e.target.closest('.cover');if(cover&&!e.target.closest('label,input')){const input=cover.querySelector('[data-video]');if(input&&!input.disabled)input.click();return}const el=e.target.closest('button');if(!el)return;const d=el.dataset;if(d.retry)await action('retry',{id:d.retry});if(d.cancel)await action('cancel',{id:d.cancel});if(d.place){const t=document.querySelector('[data-topic="'+d.place+'"]');await action('place',{id:d.place,topic:t.value})}if(d.preview){try{const r=await api('preview?id='+encodeURIComponent(d.preview));$('previewtext').textContent=r.note_markdown?r.note_markdown+'\n\n画面摘要：\n'+r.visual_summary+'\n\n待核实：\n'+(r.uncertainties||[]).join('\n'):'尚未生成草稿。';$('preview').showModal()}catch(err){toast(err.message)}}});
 $('closepreview').onclick=()=>$('preview').close();
+$('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toast('请扫码登录；成功后关闭窗口，再刷新收藏')};
 // Only a complete pointer gesture on the actual outer backdrop dismisses a panel.
 // A nested preview closes on its own, leaving its parent queue open.
 for(const dialog of document.querySelectorAll('dialog')){
@@ -147,4 +293,4 @@ for(const dialog of document.querySelectorAll('dialog')){
  dialog.addEventListener('pointerup',e=>{if(down===e.pointerId&&outside(e))dialog.close();down=null});
  dialog.addEventListener('pointercancel',()=>down=null);
 }
-refresh();setInterval(refresh,3500);
+alignWorkspaceBrand();refresh();setInterval(refresh,3500);

@@ -2,9 +2,9 @@ import os,sys
 sys.path.insert(0,str(__import__('pathlib').Path(__file__).resolve().parents[1]/'backend'))
 import contextlib, io, json, hashlib, sqlite3, tempfile, unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 from core import Store,Service,BrowserBridge,scan_notes,video_id,SCHEMA,IMAGE_SCHEMA,ROOT,topics,read_json,atomic_json,image_manifest
-from browser_worker import extract_response,atomic_json as browser_atomic_json
+from browser_worker import extract_response,atomic_json as browser_atomic_json,login_required_text,retry_collection_scroll
 
 ID='1000000000000000001'
 class Tests(unittest.TestCase):
@@ -38,6 +38,41 @@ class Tests(unittest.TestCase):
     def service(self):
         with patch.object(Service,'import_local'),patch.object(Service,'refresh_notes'):
             return Service(Store(self.root/'db.sqlite3'),self.vault,start_worker=False)
+    def test_navigation_motion_default_and_persistent_opt_in(self):
+        s=self.service();self.assertEqual(s.snapshot()['navigation_motion'],'system')
+        self.assertTrue(s.action('navigation_motion',dict(mode='on'))['ok'])
+        self.assertEqual(s.snapshot()['navigation_motion'],'on')
+        self.assertEqual(Store(self.root/'db.sqlite3').setting('navigation_motion'),'on')
+    def test_home_card_order_default_and_persistent(self):
+        s=self.service();order=['douyin','focus','status','later','next']
+        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later'])
+        self.assertEqual(s.action('home_layout',dict(order=order))['order'],order)
+        self.assertEqual(self.service().snapshot()['home_card_order'],order)
+    def test_home_card_order_rejects_unknown_duplicate_and_nonlist(self):
+        s=self.service()
+        for order in (None,{},'status',[],['status']*5,['status','next','focus','douyin','secret'],[{},'next','focus','douyin','later']):
+            with self.assertRaises(ValueError):s.action('home_layout',dict(order=order))
+        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later'])
+    def test_home_layout_does_not_change_tasks_or_notes(self):
+        s=self.service();s.store.set_setting('paused','1');before=self.vault/'处理文件/AI学习/_索引.md'
+        original=before.read_bytes();jobs=s.snapshot()['jobs'];videos=s.snapshot()['videos']
+        s.action('home_layout',dict(order=['later','status','next','focus','douyin']))
+        self.assertEqual(s.snapshot()['jobs'],jobs);self.assertEqual(s.snapshot()['videos'],videos)
+        self.assertEqual(before.read_bytes(),original);self.assertEqual(s.store.setting('paused'),'1');self.assertFalse(s.wake.is_set())
+    def test_corrupt_saved_layout_uses_default(self):
+        s=self.service()
+        for raw in ('bad json','["unknown"]','{}','null'):
+            s.store.set_setting('home_card_order',raw)
+            self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later'])
+    def test_navigation_motion_rejects_invalid_values(self):
+        s=self.service()
+        for mode in (None,'always','<script>',{},True):
+            with self.assertRaises(ValueError):s.action('navigation_motion',dict(mode=mode))
+        self.assertEqual(s.snapshot()['navigation_motion'],'system')
+    def test_motion_preference_does_not_start_jobs_or_change_pause(self):
+        s=self.service();s.store.set_setting('paused','1')
+        for mode in ('on','off','system'):s.action('navigation_motion',dict(mode=mode))
+        self.assertEqual(s.store.setting('paused'),'1');self.assertFalse(s.wake.is_set())
     def result(self):return dict(title='多模态学习清单',topic='处理文件/AI学习',needs_placement=False,transcript_clean='',visual_summary='00:02 Python',evidence=[dict(timestamp=2,kind='visual',content='Python')],uncertainties=['抽样不代表完整视频'],note_markdown='# 多模态学习清单\n\n作者展示Python等主题，顺序未验证。')
     def images(self,count=2):
         from PIL import Image
@@ -100,9 +135,33 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'不截断'):s.ensure_images(ID,self.root)
     def test_image_job_skips_audio_and_frame_commands(self):
         s=self.service();d=self.images();s.store.upsert(dict(id=ID,kind='images'));jid=s.store.enqueue([ID])['added'][0]
-        with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_images',return_value=d),patch.object(s,'analyze',return_value=self.image_result()),patch.object(s,'run_command') as command:
-            s.process_job(s.store.rows('SELECT * FROM jobs')[0]);command.assert_not_called()
+        with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_images',return_value=d),patch.object(s,'analyze',return_value=self.image_result()),patch.object(s,'run_command') as command,patch('components.ensure_decoder') as decoder:
+            s.process_job(s.store.rows('SELECT * FROM jobs')[0]);command.assert_not_called();decoder.assert_not_called()
         self.assertEqual(s.store.rows('SELECT * FROM jobs')[0]['status'],'completed')
+    def video_job(self):
+        s=self.service();d=self.root/'video';d.mkdir();atomic_json(d/'meta.json',dict(kind='video'))
+        s.store.upsert(dict(id=ID,kind='video'));s.store.enqueue([ID])
+        return s,d,s.store.rows('SELECT * FROM jobs')[0]
+    def test_video_decoder_ready_before_asr_frames_and_model(self):
+        s,d,j=self.video_job();calls=[];r=self.result();r.update(topic='',needs_placement=True)
+        def command(args,logfile,**kw):calls.append(Path(logfile).stem)
+        def analyze(*args):calls.append('gpt');return r
+        with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_media',return_value=d),patch('components.ensure_decoder',side_effect=lambda *_:calls.append('decoder')),patch.object(s,'run_command',side_effect=command),patch.object(s,'analyze',side_effect=analyze),patch.object(s,'publish') as publish:
+            s.process_job(j);publish.assert_not_called()
+        self.assertEqual(calls,['decoder','transcribe','frames','gpt'])
+        self.assertEqual(s.store.rows('SELECT status FROM jobs')[0]['status'],'needs_review')
+    def test_decoder_failure_stops_before_asr_or_model(self):
+        s,d,j=self.video_job()
+        with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_media',return_value=d),patch('components.ensure_decoder',side_effect=RuntimeError('decoder unavailable')),patch.object(s,'run_command') as command,patch.object(s,'analyze') as model:
+            with self.assertRaisesRegex(RuntimeError,'decoder unavailable'):s.process_job(j)
+            command.assert_not_called();model.assert_not_called()
+        self.assertEqual(s.store.rows('SELECT stage FROM jobs')[0]['stage'],'components')
+    def test_cancel_during_decoder_setup_does_not_start_asr(self):
+        s,d,j=self.video_job()
+        def cancel(*_):s.store.execute('UPDATE jobs SET cancel=1 WHERE id=?',(j['id'],))
+        with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_media',return_value=d),patch('components.ensure_decoder',side_effect=cancel),patch.object(s,'run_command') as command,patch.object(s,'analyze') as model:
+            s.process_job(j);command.assert_not_called();model.assert_not_called()
+        self.assertEqual(s.store.rows('SELECT status FROM jobs')[0]['status'],'cancelled')
     def test_image_analyze_attaches_all_pages_and_reuses_verified(self):
         s=self.service();d=self.images();run=self.root/'run';run.mkdir();calls=[]
         def fake_model(args,logfile,**kw):
@@ -218,6 +277,44 @@ class Tests(unittest.TestCase):
         result=s.failed_sync('TargetClosedError')
         self.assertEqual(result['count'],1);self.assertTrue(result['complete']);self.assertEqual(result['last_success_updated'],123)
         self.assertNotIn('TargetClosedError',result['message'])
+    def test_login_prompt_requires_explicit_evidence(self):
+        self.assertTrue(login_required_text('未登录\n收藏'))
+        self.assertTrue(login_required_text('登录后即可观看喜欢、收藏的视频'))
+        self.assertFalse(login_required_text('登录\n隐私政策\n我的收藏'))
+        self.assertFalse(login_required_text('网络异常，请重试'))
+    def test_stalled_collection_uses_rendered_scroll_not_api(self):
+        page=Mock();retry_collection_scroll(page)
+        script=page.evaluate.call_args.args[0]
+        self.assertIn('document.scrollingElement',script);self.assertIn('scrollTop',script)
+        self.assertNotIn('fetch(',script)
+        page.mouse.wheel.assert_called_once_with(0,1200)
+        page.wait_for_timeout.assert_called_once_with(2500)
+    def test_failed_sync_keeps_login_reason_and_cache(self):
+        s=self.service();s.store.upsert(dict(id=ID),favorite=True)
+        result=s.failed_sync('请扫码','login_required')
+        self.assertEqual(result['error_code'],'login_required');self.assertEqual(result['count'],1)
+        self.assertIn('尚未登录',result['message']);self.assertEqual(len(s.snapshot()['videos']),1)
+        self.assertEqual(s.failed_sync('timeout')['error_code'],'read_failed')
+    def test_auth_check_failure_does_not_claim_expired_login(self):
+        import time
+        s=self.service()
+        with patch.object(s.bridge,'request',return_value=dict(ok=False,error_code='read_failed')):
+            s.check_login()
+            for _ in range(100):
+                if not s.auth_lock.locked():break
+                time.sleep(.01)
+        account=s.snapshot()['account'];self.assertFalse(account['needs_login'])
+        self.assertEqual(account['error_code'],'auth_check_failed')
+    def test_sync_login_failure_sets_account_but_keeps_favorites(self):
+        import time
+        s=self.service();s.store.upsert(dict(id=ID),favorite=True)
+        with patch.object(s.bridge,'request',return_value=dict(ok=False,error_code='login_required',message='未登录')):
+            s.sync()
+            for _ in range(100):
+                if not s.sync_lock.locked():break
+                time.sleep(.01)
+        snapshot=s.snapshot();self.assertTrue(snapshot['account']['needs_login'])
+        self.assertEqual(snapshot['sync']['error_code'],'login_required');self.assertEqual(len(snapshot['videos']),1)
     def test_background_retries_closed_once_without_gui(self):
         b=BrowserBridge()
         with patch.object(b,'start') as start,patch.object(b,'exchange',side_effect=[dict(ok=False,error_code='browser_closed'),dict(ok=True)]) as exchange,patch('core.time.sleep'):
