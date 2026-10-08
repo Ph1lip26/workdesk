@@ -2,10 +2,10 @@ async (page,output='build')=>{
  const checks=[],errors=[];const check=(name,value)=>{if(!value)throw Error(name);checks.push(name)};
  page.on('pageerror',e=>errors.push(e.message));await page.goto(page.url().split('#')[0]+'#home');await page.reload();
  await page.waitForFunction(()=>homeState?.configured&&state);
- const layouts=[['status','next','focus','douyin','later'],['next','status','focus','douyin','later'],['next','focus','status','douyin','later'],['next','focus','douyin','later','status']];
+ const layouts=[['status','next','focus','douyin','later','materials'],['next','status','focus','douyin','later','materials'],['next','focus','status','douyin','later','materials'],['next','focus','douyin','later','status','materials']];
  for(const desktop of [false,true]){
   await page.evaluate(value=>document.body.classList.toggle('desktop-shell',value),desktop);
-  for(const [width,height] of [[1440,920],[1280,720],[1080,620],[960,600],[800,560],[1024,576]]){
+  for(const [width,height] of [[1440,920],[1440,861],[1440,840],[1414,780],[1280,720],[1280,701],[1080,620],[960,600],[800,560],[1024,576]]){
    await page.setViewportSize({width,height});await page.waitForTimeout(100);
    for(const layout of layouts){
     await page.evaluate(layout=>applyHomeOrder(layout),layout);await page.waitForTimeout(40);
@@ -15,7 +15,8 @@ async (page,output='build')=>{
      return {scroll:[ws.scrollHeight,ws.clientHeight,ws.scrollTop],cards:cards.map(c=>{
       const r=c.getBoundingClientRect(),body=c.querySelector('.tile-body').getBoundingClientRect(),foot=c.querySelector('.tile-foot').getBoundingClientRect();
       const hit=[...c.querySelectorAll('button')].every(b=>{const t=b.getBoundingClientRect();return t.top>=r.top&&t.bottom<=r.bottom&&t.left>=r.left&&t.right<=r.right});
-      return {id:c.dataset.homeCard,within:r.top>=w.top&&r.bottom<=w.bottom&&r.left>=w.left&&r.right<=w.right,clip:c.scrollHeight>c.clientHeight+1,bodyOver:body.bottom>foot.top+1,hit,height:r.height};
+      const contents=[...c.querySelector('.tile-body').children].filter(el=>getComputedStyle(el).display!=='none');
+      return {id:c.dataset.homeCard,within:r.top>=w.top&&r.bottom<=w.bottom&&r.left>=w.left&&r.right<=w.right,clip:c.scrollHeight>c.clientHeight+1,bodyOver:body.bottom>foot.top+1||contents.some(el=>el.getBoundingClientRect().bottom>foot.top+1),hit,height:r.height};
      }),font:parseFloat(getComputedStyle(document.querySelector('.tile-record-summary')).fontSize)};
     });
     const tag=(desktop?'native':'browser')+' '+width+'x'+height+' status@'+layout.indexOf('status');
@@ -30,7 +31,7 @@ async (page,output='build')=>{
  }
  await page.evaluate(()=>{applyHomeOrder(HOME_CARD_IDS);document.body.classList.remove('desktop-shell')});
  await page.setViewportSize({width:1440,height:920});await page.waitForTimeout(100);
- check('cards are distinct low-saturation graphite surfaces',await page.evaluate(()=>{const channel=e=>getComputedStyle(e).backgroundColor.match(/\d+/g).slice(0,3).map(Number),bg=channel(document.body);return [...document.querySelectorAll('#home-cards article')].every(c=>{const v=channel(c);return v.every((n,i)=>n-bg[i]>=20)&&Math.max(...v)-Math.min(...v)<=8})}));
+ check('cards are distinct neutral metal surfaces',await page.evaluate(()=>{const channel=e=>getComputedStyle(e).backgroundColor.match(/\d+/g).slice(0,3).map(Number),bg=channel(document.body);return [...document.querySelectorAll('#home-cards article')].every(c=>{const v=channel(c),lo=Math.min(...v),hi=Math.max(...v);return v.every((n,i)=>n-bg[i]>=15)&&hi-lo<=7})}));
  await page.locator('[data-home-list=next]').click();
  check('all schedule records remain reachable',await page.locator('#homedetail .tile-record').count()===7);
  check('uncertain date remains explicit in full list',await page.locator('#home-detail-content').textContent().then(t=>t.includes('原日期')&&!t.includes('undefined')));
@@ -49,7 +50,7 @@ async (page,output='build')=>{
  await page.screenshot({path:output+'/home-one-screen-desktop.png'});
  await page.setViewportSize({width:800,height:560});await page.evaluate(()=>document.body.classList.add('desktop-shell'));await page.waitForTimeout(150);
  await page.screenshot({path:output+'/home-one-screen-minimum.png'});
- await page.evaluate(()=>applyHomeOrder(['next','focus','status','douyin','later']));await page.waitForTimeout(100);
+ await page.evaluate(()=>applyHomeOrder(['next','focus','status','douyin','later','materials']));await page.waitForTimeout(100);
  await page.screenshot({path:output+'/home-one-screen-reordered.png'});
  await page.evaluate(()=>{applyHomeOrder(HOME_CARD_IDS);document.body.classList.remove('desktop-shell')});await page.setViewportSize({width:1440,height:920});
  await page.locator('[data-go-module=douyin]').click();await page.waitForTimeout(300);

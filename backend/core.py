@@ -5,9 +5,13 @@ from urllib.parse import quote
 from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDIAN
 from home import Homepage
 TERMINAL={'completed','skipped','cancelled'}
-HOME_CARDS=('status','next','focus','douyin','later')
+HOME_CARDS=('status','next','focus','douyin','later','materials')
 
-def home_order(value):
+def home_order(value,legacy=False):
+    if legacy and isinstance(value,list) and len(value)==5 and all(isinstance(x,str) for x in value) and set(value)==set(HOME_CARDS[:-1]):
+        # Read-time migration only: preserve the user's five-card arrangement,
+        # append the new entry without rewriting saved settings on startup.
+        return [*value,'materials']
     if not isinstance(value,list) or len(value)!=len(HOME_CARDS) or any(not isinstance(x,str) for x in value) or set(value)!=set(HOME_CARDS):
         raise ValueError('首页布局必须包含全部卡片，且不能重复或加入未知卡片')
     return value
@@ -257,6 +261,10 @@ class Service:
         for p in MEDIA.glob('*/meta.json'):
             m=read_json(p,{})
             if not re.fullmatch(r'\d{15,22}',str(m.get('aweme_id',''))):continue
+            # Download caches can contain older titles, expired cover URLs and
+            # rounded durations. Startup discovers new records, never overwrites
+            # authoritative metadata already reconciled from the favorites feed.
+            if self.store.rows('SELECT id FROM videos WHERE id=?',(str(m['aweme_id']),)):continue
             self.store.upsert(dict(id=str(m['aweme_id']),title=m.get('desc',''),author=m.get('author',''),duration=m.get('duration',0),cover=m.get('cover_url') or '',kind=m.get('kind','video')))
     def refresh_notes(self):
         records=scan_notes(self.vault)
@@ -308,7 +316,7 @@ class Service:
                     syncing=self.sync_lock.locked(),authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
                      paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
     def card_order(self):
-        try:return home_order(json.loads(self.store.setting('home_card_order','[]')))
+        try:return home_order(json.loads(self.store.setting('home_card_order','[]')),legacy=True)
         except (ValueError,TypeError):return list(HOME_CARDS)
     def update_job(self,jid,**kw):
         kw['updated']=time.time();self.store.execute('UPDATE jobs SET '+','.join(k+'=?' for k in kw)+' WHERE id=?',(*kw.values(),jid))

@@ -5,18 +5,22 @@ async (page,output='build')=>{
  await page.setViewportSize({width:1440,height:920});
  check('home header no longer displays a date or clock',await page.locator('.home-top p,.home-top time').count()===0);
  check('evidence dates are still present',await page.locator('.tile-evidence').textContent().then(s=>s.includes('最新实报')));
- check('home retains five cards and no secondary menu',await page.locator('[data-home-card]').count()===5&&await page.locator('#panelhost').isHidden());
+ check('home retains six cards and no secondary menu',await page.locator('[data-home-card]').count()===6&&await page.locator('#panelhost').isHidden());
  check('desktop header, summaries, and counts have ordered type sizes',await page.evaluate(()=>{
   const size=s=>parseFloat(getComputedStyle(document.querySelector(s)).fontSize);
-  return size('.collection-total strong')>size('.tile-phase h3')&&size('.tile-phase h3')>size('.home-top h1')&&size('.home-top h1')>size('.tile-record-summary')&&size('.tile-record-summary')>=14;
+  return size('.collection-total strong')>size('.tile-phase h3')&&size('.tile-phase h3')>size('.home-top h1')&&size('.home-top h1')>size('.tile-record-summary')&&size('.tile-record-summary')>=16;
  }));
  check('all text uses one system font stack',await page.evaluate(()=>{
   const family=getComputedStyle(document.body).fontFamily;
   return [...document.querySelectorAll('.home-top h1,.home-tile h2,.home-tile h3,.home-tile button,.home-tile p')].every(e=>getComputedStyle(e).fontFamily===family);
  }));
- check('matte cards use surface, directional highlight, and restrained elevation',await page.evaluate(()=>{
-  const c=getComputedStyle(document.querySelector('.home-tile'));
-  return c.backgroundImage.includes('linear-gradient')&&c.backgroundColor==='rgb(45, 48, 51)'&&c.boxShadow!=='none'&&c.backdropFilter==='none';
+ check('metal cards use non-periodic fine brushing, neutral reflection, and a stronger machined edge',await page.evaluate(()=>{
+  const c=getComputedStyle(document.querySelector('[data-home-card=status]'));
+  return c.backgroundImage.includes('data:image/svg+xml')&&c.backgroundColor==='rgb(46, 48, 52)'&&c.boxShadow!=='none'&&c.backdropFilter==='none';
+ }));
+ check('all six home cards share exactly one fill and finish',await page.evaluate(()=>{
+  const cards=[...document.querySelectorAll('.home-tile')],styles=cards.map(e=>getComputedStyle(e));
+  return styles.length===6&&new Set(styles.map(s=>s.backgroundColor)).size===1&&new Set(styles.map(s=>s.backgroundImage)).size===1&&styles[0].backgroundColor!==getComputedStyle(document.body).backgroundColor;
  }));
  check('fixed finish cannot intercept input or scroll',await page.evaluate(()=>{const s=getComputedStyle(document.body,'::before');return s.position==='fixed'&&s.pointerEvents==='none'}));
  // Worst-case card highlight is brighter than its base; selected body/CTA
@@ -25,9 +29,13 @@ async (page,output='build')=>{
   const lum=c=>c.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((a,n,i)=>a+n*[.2126,.7152,.0722][i],0);
   return ['.tile-heading h2','.status-record>span','.tile-record-summary','.tile-record-top small','.tile-evidence','.home-source'].map(s=>{
    const color=getComputedStyle(document.querySelector(s)).color.match(/\d+/g).slice(0,3).map(Number);
-   return (lum(color)+.05)/(lum([60,63,66])+.05);
+   // Conservatively brighter than the the maximum combined neutral sheen and brushing (not the thin rim).
+   return (lum(color)+.05)/(lum([77,79,83])+.05);
   });
  });check('selected home text and actions pass AA against surface highlight',ratios.every(r=>r>=4.5));
+ check('home corners are larger with continuous-corner enhancement',await page.evaluate(()=>{const c=getComputedStyle(document.querySelector('.home-tile'));return parseFloat(c.borderRadius)>=28&&(!CSS.supports('corner-shape','squircle')||c.cornerShape==='superellipse(2)') }));
+ check('normal home body text is fuller, not thin',await page.evaluate(()=>['.tile-record-summary','.tile-record-top','.home-source'].every(sel=>parseFloat(getComputedStyle(document.querySelector(sel)).fontWeight)>=550)));
+ check('all six cards retain a static brushed finish rather than flat fill',await page.evaluate(()=>[...document.querySelectorAll('.home-tile')].every(c=>getComputedStyle(c).backgroundImage.includes('data:image/svg+xml'))));
  await page.screenshot({path:output+'/material-home.png'});
  await page.locator('[data-go-module=douyin]').click();await page.waitForTimeout(900);
  await page.evaluate(async()=>{await api('navigation_motion',{mode:'on'});await refresh()});

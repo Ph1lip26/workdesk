@@ -1,11 +1,11 @@
-async (page,output)=>{
+async (page,output='build')=>{
  const checks=[],errors=[],mutations=[];const check=(name,value)=>{if(!value)throw Error(name);checks.push(name)};
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST')mutations.push(new URL(r.url()).pathname)});
  await page.unroute('**/api/home');await page.unroute('**/api/open_home_note');await page.unroute('**/api/home_layout');const base=page.url().split('#')[0];await page.mouse.up();await page.goto(base+'#home');await page.reload();await page.waitForFunction(()=>homeState?.configured&&state);
- const defaults=['status','next','focus','douyin','later'];
+ const defaults=['status','next','focus','douyin','later','materials'];
  const order=()=>page.evaluate(()=>[...document.querySelectorAll('#home-cards>[data-home-card]')].map(c=>c.dataset.homeCard));
  check('synthetic stage only',await page.locator('.tile-phase h3').textContent()==='测试阶段');
- check('five cards, not a report',await page.locator('#home-cards>[data-home-card]').count()===5);
+ check('six source-backed cards, not a report',await page.locator('#home-cards>[data-home-card]').count()===6);
  check('four current subjects are source backed',await page.locator('.status-record').count()===4);
  check('no homepage submenu in DOM',await page.locator('#homenav').count()===0);
  check('homepage menu and toggle are absent',await page.locator('#modulepanel').isHidden()&&await page.locator('#navtoggle').isHidden());
@@ -21,11 +21,29 @@ async (page,output)=>{
  {const r=await page.locator('[data-home-card=douyin] .collection-total').boundingBox();await page.mouse.click(r.x+r.width/2,r.y+r.height/2);}await page.waitForTimeout(300);
  check('module counter click enters its existing library',await page.evaluate(()=>currentModule==='douyin'));
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
- await page.locator('.module-entry').focus();await page.keyboard.press('Enter');await page.waitForTimeout(300);
+ await page.locator('[data-home-card=douyin] .module-entry').focus();await page.keyboard.press('Enter');await page.waitForTimeout(300);
  check('module entry works from keyboard without fake future routes',await page.evaluate(()=>currentModule==='douyin'&&Object.keys(moduleRegistry).length===2));
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
  await page.locator('[data-home-handle=douyin]').click();
  check('drag handle click does not navigate away',await page.evaluate(()=>currentModule==='home'));
+
+ check('local card counts content records, not downloaded files',await page.locator('.material-total strong').textContent()==='65'&&await page.locator('.material-meta').textContent().then(t=>t.includes('已入库 1'))&&await page.locator('.material-note').textContent().then(t=>t.includes('包含收藏')));
+ {const r=await page.locator('[data-home-card=materials] h2').boundingBox();await page.mouse.click(r.x+r.width/2,r.y+r.height/2);}await page.waitForTimeout(300);
+ check('local full-card link enters existing local records at the top',await page.evaluate(()=>currentModule==='douyin'&&view==='local'&&document.querySelectorAll('.card').length===30&&document.querySelector('.workspace').scrollTop===0));
+ await page.locator('#homemodule').click();await page.waitForTimeout(300);
+ await page.locator('[data-home-card=douyin] .module-entry').click();await page.waitForTimeout(300);
+ check('favorites card restores favorites from a local view',await page.evaluate(()=>currentModule==='douyin'&&view==='favorites'));
+ await page.locator('#homemodule').click();await page.waitForTimeout(300);
+ await page.locator('[data-home-card=materials] .module-entry').focus();await page.keyboard.press('Enter');await page.waitForTimeout(300);
+ check('local entry keyboard activates actual source',await page.evaluate(()=>currentModule==='douyin'&&view==='local'));
+ await page.locator('#homemodule').click();await page.waitForTimeout(300);
+ await page.locator('[data-home-handle=materials]').click();
+ check('local drag handle does not activate full-card link',await page.evaluate(()=>currentModule==='home'));
+ const materialHtml=await page.locator('#home-material-summary').innerHTML();
+ await page.evaluate(()=>{window.reviewState=state;state=null;renderHomepageSummary()});
+ check('both modules honestly report disconnected state',await page.locator('#home-module-summary').textContent().then(t=>t.includes('不显示推测数值'))&&await page.locator('#home-material-summary').textContent().then(t=>t.includes('不显示推测数值')));
+ await page.evaluate(()=>{state=window.reviewState;delete window.reviewState;renderHomepageSummary()});
+ check('same record counts recover after reconnect',await page.locator('#home-material-summary').innerHTML()===materialHtml);
 
  const jobsBefore=await page.evaluate(()=>JSON.stringify(state.jobs)),videosBefore=await page.evaluate(()=>JSON.stringify(state.videos));
  for(const width of [1440,1080,800,600,390,320]){
@@ -75,9 +93,9 @@ async (page,output)=>{
  await page.unroute('**/api/home_layout');
  await page.locator('#home-reset').click();await page.evaluate(()=>homeSaveChain);await page.waitForTimeout(350);
  check('restore default is persistent',JSON.stringify(await order())===JSON.stringify(defaults)&&await page.evaluate(async()=>JSON.stringify((await api('state')).home_card_order)===JSON.stringify(HOME_CARD_IDS)));
-  for(const layout of [['next','focus','status','douyin','later'],['douyin','status','focus','later','next'],['next','focus','douyin','later','status']]){
+  for(const layout of [['next','focus','status','douyin','later','materials'],['douyin','status','focus','later','next','materials'],['next','focus','douyin','later','status','materials']]){
   await page.evaluate(layout=>applyHomeOrder(layout),layout);
-  check('mixed-size order remains compact '+layout.indexOf('status'),await page.evaluate(()=>{const g=document.getElementById('home-cards'),n=getComputedStyle(g).gridTemplateColumns.split(/\s+/).length,i=homeOrder.indexOf('status');return document.querySelector('[data-home-card=status]').classList.contains('home-tile-wide')===(n>1&&n-i%n>=2)}));
+  check('six equal cells preserve every custom order '+layout.indexOf('status'),await page.evaluate(()=>document.querySelectorAll('#home-cards article').length===6&&!document.querySelector('.home-tile-wide')&&getComputedStyle(document.getElementById('home-cards')).gridTemplateColumns.split(/\s+/).length===3));
   check('reordered cards do not overlap '+layout.indexOf('status'),await page.evaluate(()=>{const r=[...document.querySelectorAll('#home-cards article')].map(c=>c.getBoundingClientRect());return r.every((a,i)=>r.every((b,j)=>i===j||a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))}));
  }
  await page.evaluate(()=>applyHomeOrder(HOME_CARD_IDS));
@@ -94,7 +112,7 @@ async (page,output)=>{
  check('layout updates did not alter processing jobs',await page.evaluate(before=>JSON.stringify(state.jobs)===before,jobsBefore));
  check('layout updates did not alter material records',await page.evaluate(before=>JSON.stringify(state.videos)===before,videosBefore));
  const fake={configured:false,date:await page.evaluate(()=>homeState.date),sources:[],actions:[],schedule:[],projects:[],waiting:[],links:[]};
- await page.route('**/api/home',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fake)}));await page.waitForFunction(()=>!homeBusy);await page.locator('#home-refresh').click();await page.waitForFunction(()=>homeState?.configured===false&&document.querySelectorAll('[data-home-card]').length===1);
+ await page.route('**/api/home',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fake)}));await page.waitForFunction(()=>!homeBusy);await page.locator('#home-refresh').click();await page.waitForFunction(()=>homeState?.configured===false&&document.querySelectorAll('[data-home-card]').length===2);
  check('unbound personal notes do not hide real module data',await page.locator('#homeview').textContent().then(t=>t.includes('尚未绑定'))&&await page.locator('.collection-total strong').textContent()==='65');await page.unroute('**/api/home');await page.waitForFunction(()=>!homeBusy);await page.locator('#home-refresh').click();
  await page.waitForFunction(()=>homeState?.configured);await page.setViewportSize({width:1440,height:920});await page.waitForTimeout(4700);
  await page.screenshot({path:output+'/home-cards-desktop.png'});

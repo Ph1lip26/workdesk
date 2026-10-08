@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs,quote
 from core import Service, ROOT, BUNDLE
-from branding import brand_png
+from branding import brand_png, brand_mark
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=8767);a=p.parse_args()
@@ -26,6 +26,9 @@ def main():
                 page=(BUNDLE/'static/index.html').read_text(encoding='utf-8').replace('__TOKEN__',token)
                 self.send(200,page,'text/html; charset=utf-8')
             elif path=='/health':self.send(200,dict(ok=True,service='workdesk',instance=os.environ.get('WORKDESK_INSTANCE','')))
+            elif path=='/brand':
+                image,kind=brand_mark(ROOT,BUNDLE/'static/brand.png')
+                self.send(200,image,kind)
             elif path in ('/brand.png','/favicon.ico'):
                 self.send(200,brand_png(ROOT,'mark.png' if path=='/brand.png' else 'icon.png',BUNDLE/'static/brand.png'),'image/png')
             elif path=='/api/state':self.send(200,service.snapshot())

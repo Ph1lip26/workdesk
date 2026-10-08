@@ -15,6 +15,10 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
 (async()=>{
  try{
   await desk.startup;const w=desk.window,wc=w.webContents;
+  // Only the isolated test: desktop tools may minimize this window while frame
+  // probes run. Do not let a hidden fixture stall its promises or rAF loops;
+  // the real application's normal background policy remains unchanged.
+  wc.setBackgroundThrottling(false);
   const errors=[];wc.on('console-message',(_event,...args)=>{const details=args[0];if(details?.level==='error')errors.push(details.message)});
   async function js(code){return wc.executeJavaScript(code)}
   async function navigationSettled(){
@@ -23,14 +27,15 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     if(await js("!document.body.classList.contains('nav-moving')&&document.getAnimations().every(a=>a.playState!=='running'||!a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.cards,.card,#douyinmodule,#douyinmodule svg,#navtoggle svg path:last-child,.window-chrome'))"))return;
     await sleep(50);
    }
-   const pending=await js("document.getAnimations().filter(a=>a.playState==='running'&&a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.card,#douyinmodule,#douyinmodule svg,#navtoggle svg path:last-child,.window-chrome')).map(a=>({target:a.effect.target.id||a.effect.target.className.baseVal||a.effect.target.className,type:a.constructor.name,time:a.currentTime,duration:a.effect.getTiming().duration,iterations:a.effect.getTiming().iterations}))");
-   throw Error('Navigation did not settle within two seconds: '+JSON.stringify(pending));
+   const pending=await js("document.getAnimations().filter(a=>a.playState==='running'&&a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.cards,.card,#douyinmodule,#douyinmodule svg,#navtoggle svg path:last-child,.window-chrome')).map(a=>({target:a.effect.target.id||a.effect.target.className.baseVal||a.effect.target.className,type:a.constructor.name,time:a.currentTime,duration:a.effect.getTiming().duration,iterations:a.effect.getTiming().iterations}))");
+   const state=await js("({moving:document.body.classList.contains('nav-moving'),reflow:!!navigationReflow,generation:navigationGeneration,animations:navigationAnimations.map(a=>({state:a.playState,time:a.currentTime,pending:a.pending})),visibility:document.visibilityState})");
+   throw Error('Navigation did not settle within two seconds: '+JSON.stringify({pending,state}));
   }
   for(let n=0;n<80;n++){if(await js("typeof homeState!=='undefined'&&homeState?.configured&&document.querySelectorAll('.card').length===30"))break;await sleep(100)}
   check('native default page is personal home',await js("document.body.dataset.module==='home'&&!document.getElementById('homeview').hidden"));
   check('homepage has a real stage and four current subjects',await js("document.querySelector('.tile-phase h3').textContent==='测试阶段'&&document.querySelectorAll('.status-record').length===4"));
   check('homepage and library are separate registered modules',await js("Object.keys(moduleRegistry).length===2&&document.getElementById('douyinview').hidden"));
-  check('home has five movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===5"));
+  check('home has six movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===6"));
   check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('navtoggle').hidden&&document.getElementById('modulepanel').inert"));
   check('home content starts at primary rail',await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.querySelector('.module-rail').getBoundingClientRect().right)<1"));
   for(const [width,height] of [[1440,920],[1080,620],[800,560]]){
@@ -39,19 +44,30 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    check(`${width}: native wordmark shares the rail center`,await js("(()=>{const n=document.querySelector('.workspace-name').getBoundingClientRect(),r=document.querySelector('.module-rail').getBoundingClientRect();return Math.abs(n.left+n.width/2-r.left-r.width/2)<.1})()"));
    check(`${width}: native logo slot fits without flex shrinking`,await js("(()=>{const i=document.querySelector('.workspace-logo'),r=i.getBoundingClientRect(),m=document.querySelector('.workspace-mark').getBoundingClientRect(),n=document.querySelector('.workspace-name').getBoundingClientRect();return getComputedStyle(i).flexShrink==='0'&&r.top>=m.top&&r.bottom<=m.bottom&&n.bottom<=m.bottom})()"));
    for(const compact of [false,true]){
-    await js(compact?"applyHomeOrder(['next','focus','status','douyin','later'])":"applyHomeOrder(HOME_CARD_IDS)");
+    await js(compact?"applyHomeOrder(['next','focus','status','douyin','later','materials'])":"applyHomeOrder(HOME_CARD_IDS)");
+    const viewportEvidence=await js("(()=>{const ws=document.querySelector('.workspace'),r=ws.getBoundingClientRect();return {viewport:[innerWidth,innerHeight,devicePixelRatio],scroll:[ws.scrollHeight,ws.clientHeight],cards:[...document.querySelectorAll('#home-cards article')].map(c=>{const b=c.getBoundingClientRect(),foot=c.querySelector('.tile-foot').getBoundingClientRect();return {id:c.dataset.homeCard,scroll:[c.scrollHeight,c.clientHeight],bottom:b.bottom,workspaceBottom:r.bottom,footBottom:foot.bottom,height:b.height}})}})()");
+    if(viewportEvidence.scroll[0]>viewportEvidence.scroll[1]+1||viewportEvidence.cards.some(c=>c.bottom>c.workspaceBottom||c.scroll[0]>c.scroll[1]+1||c.footBottom>c.bottom)){
+     fs.writeFileSync(path.join(fixture,'home-viewport-failure.json'),JSON.stringify(viewportEvidence,null,2));
+     await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'home-viewport-failure.png'),img.toPNG()));
+    }
     check(`${width}x${height} ${compact?'reordered':'default'}: native home fits one viewport`,await js("(()=>{const ws=document.querySelector('.workspace'),r=ws.getBoundingClientRect();return ws.scrollHeight<=ws.clientHeight+1&&[...document.querySelectorAll('#home-cards article')].every(c=>{const b=c.getBoundingClientRect(),foot=c.querySelector('.tile-foot').getBoundingClientRect();return b.bottom<=r.bottom&&c.scrollHeight<=c.clientHeight+1&&foot.bottom<=b.bottom})})()"));
    }
   }
   w.setContentSize(1440,920);await sleep(180);await js("applyHomeOrder(HOME_CARD_IDS)");
-  check('native homepage shows stronger neutral card surfaces',await js("getComputedStyle(document.querySelector('.home-tile')).backgroundColor==='rgb(45, 48, 51)'"));
+  check('native homepage has opaque steel status material',await js("getComputedStyle(document.querySelector('[data-home-card=status]')).backgroundColor==='rgb(46, 48, 52)'&&getComputedStyle(document.querySelector('[data-home-card=status]')).backdropFilter==='none'"));
   check('native homepage header has no date or clock',await js("!document.querySelector('.home-top p,.home-top time')"));
   check('native evidence date remains visible',await js("document.querySelector('.tile-evidence').textContent.includes('最新实报')"));
-  check('native raster branding is local and loaded',await js("(()=>{const img=document.querySelector('.workspace-logo');return img.complete&&img.naturalWidth===512&&img.getAttribute('src')==='/brand.png'})()"));
-  check('native large-window summaries use the revised readable hierarchy',await js("parseFloat(getComputedStyle(document.querySelector('.tile-record-summary')).fontSize)>=14&&parseFloat(getComputedStyle(document.querySelector('.collection-total strong')).fontSize)>parseFloat(getComputedStyle(document.querySelector('.tile-phase h3')).fontSize)"));
+  check('native generic brand fallback is local and loaded',await js("(()=>{const img=document.querySelector('.workspace-logo');return img.complete&&img.naturalWidth===512&&img.getAttribute('src')==='/brand'})()"));
+  check('native large-window summaries use the revised readable hierarchy',await js("parseFloat(getComputedStyle(document.querySelector('.tile-record-summary')).fontSize)>=16&&parseFloat(getComputedStyle(document.querySelector('.collection-total strong')).fontSize)>parseFloat(getComputedStyle(document.querySelector('.tile-phase h3')).fontSize)"));
+  check('native cards have natural larger corners and one shared brushed metal finish',await js("parseFloat(getComputedStyle(document.querySelector('.home-tile')).borderRadius)>=28&&(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundImage.includes('repeating-linear-gradient'))&&new Set(s.map(c=>c.backgroundColor)).size===1&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
+  check('native local-material card shows records with honest wording',await js("document.querySelector('.material-total strong').textContent==='65'&&document.querySelector('.material-note').textContent.includes('包含收藏')"));
   check('native material cards have no backdrop filter workload',await js("getComputedStyle(document.querySelector('.home-tile')).backdropFilter==='none'&&getComputedStyle(document.body,'::before').pointerEvents==='none'"));
   // Real pointer input needs a settled, active window; the launcher itself is hidden.
   desk.show();await sleep(250);
+  const localPoint=await js("(()=>{const r=document.querySelector('[data-home-card=materials] h2').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+  wc.sendInputEvent({type:'mouseMove',...localPoint});wc.sendInputEvent({type:'mouseDown',...localPoint,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...localPoint,button:'left',clickCount:1});await sleep(350);
+  check('native local whole-card link opens the actual local list',await js("currentModule==='douyin'&&view==='local'&&document.querySelectorAll('.card').length===30"));
+  await js("document.getElementById('homemodule').click()");await sleep(350);
   const modulePoint=await js("(()=>{const r=document.querySelector('[data-home-card=douyin] h2').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
   wc.sendInputEvent({type:'mouseMove',...modulePoint});wc.sendInputEvent({type:'mouseDown',...modulePoint,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...modulePoint,button:'left',clickCount:1});await sleep(350);
   check('native whole-card heading enters Douyin',await js("currentModule==='douyin'"));
@@ -116,6 +132,35 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('brand rail extends to top edge',await js("document.querySelector('.module-rail').getBoundingClientRect().top===0&&document.querySelector('.workspace-mark').getBoundingClientRect().top<40"));
   check('brand does not sit behind title drag strip',await js("document.querySelector('.window-chrome').getBoundingClientRect().left>=document.querySelector('.module-rail').getBoundingClientRect().right"));
   check('redundant panel texts removed',await js("!document.querySelector('.panel-heading p')&&!document.querySelector('.panel-footer')&&!document.body.innerText.includes('本机工作台')"));
+  // Test inherited visibility and painted glyphs, not only container opacity.
+  // A late visibility switch can hide an entire otherwise-correct fade.
+  for(const width of [1440,960]){
+   w.setContentSize(width,720);await navigationSettled();
+   if(await js("document.getElementById('navtoggle').getAttribute('aria-expanded')==='true'")){await js('toggleNavigation()');await navigationSettled()}
+   // Sample the middle of the 360ms text fade. A capture near its leading edge
+   // may still be the compositor's preceding dark frame; it is not a no-text bug.
+   await js('toggleNavigation()');await sleep(180);
+   const text=await js("(()=>{const el=document.querySelector('.panel-link>span'),r=el.getBoundingClientRect(),rgb=e=>getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0,3).map(Number);return {visibility:getComputedStyle(el).visibility,titleVisibility:getComputedStyle(document.querySelector('.panel-heading h2')).visibility,alpha:+getComputedStyle(document.querySelector('.panel-nav')).opacity,panel:rgb(document.getElementById('modulepanel')),row:rgb(el.closest('.panel-link')),rect:r.toJSON(),dpr:devicePixelRatio}})()");
+   check(`${width}: native text is visible during the fade`,text.visibility==='visible'&&text.titleVisibility==='visible');
+   check(`${width}: native text actually has an intermediate fade`,text.alpha>.02&&text.alpha<.9);
+   const image=await wc.capturePage(),png=image.toPNG(),pixels=image.toBitmap();
+   const iw=png.readUInt32BE(16),ih=png.readUInt32BE(20);
+   assert.equal(pixels.length,iw*ih*4,'Native bitmap pixel dimensions');
+   // Compare to the real blended row background, not a palette-specific RGB
+   // threshold. Otherwise a quieter dark surface incorrectly reports no glyphs.
+   const base=text.panel.map((v,i)=>v*(1-text.alpha)+text.row[i]*text.alpha);
+   let ink=0;
+   for(let y=Math.max(0,Math.floor(text.rect.top*text.dpr));y<Math.min(ih,Math.ceil(text.rect.bottom*text.dpr));y++){
+    for(let x=Math.max(0,Math.floor(text.rect.left*text.dpr));x<Math.min(iw,Math.ceil(text.rect.right*text.dpr));x++){
+     const i=(y*iw+x)*4;if(pixels[i+2]-base[0]>5&&pixels[i+1]-base[1]>5&&pixels[i]-base[2]>5)ink++;
+    }
+   }
+   fs.writeFileSync(path.join(app.getPath('userData'),`native-text-${width}.png`),png);
+   log.info('PAINTED_TEXT '+JSON.stringify({width,ink,text,image:{width:iw,height:ih}}));
+   check(`${width}: actual native screenshot contains partially revealed lettering`,ink>20);
+   await navigationSettled();
+   check(`${width}: native lettering finishes fully legible`,await js("getComputedStyle(document.querySelector('.panel-nav')).opacity==='1'&&getComputedStyle(document.querySelector('.panel-link>span')).visibility==='visible'"));
+  }
   for(const width of [1440,960]){
    w.setContentSize(width,720);await navigationSettled();
    for(const reverse of [false,false,true]){
@@ -183,6 +228,9 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("document.getElementById('navtoggle').click()");await navigationSettled();
   check('wide collapse frees content space',await js("document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-72)<1"));
   await js("document.getElementById('navtoggle').click()");await navigationSettled();
+  await js("toggleNavigation();navigationAnimations[0]?.cancel()");await sleep(800);
+  check('native external effect interruption restores usable flow',await js("!navigationReflow&&!document.body.classList.contains('nav-moving')&&navigationAnimations.length===0&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')"));
+  await js('toggleNavigation()');await navigationSettled();
   const reflow=await js(`(async()=>{
    const nodes=[...document.querySelectorAll('.card')],before=gridColumnCount(),frames=[],start=performance.now();
    document.getElementById('navtoggle').click();while(performance.now()-start<750){await new Promise(requestAnimationFrame);

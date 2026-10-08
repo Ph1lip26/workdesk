@@ -3,7 +3,7 @@ const {trusted,safeExternal}=require('../desktop/platform.cjs');
 const fs=require('node:fs'),path=require('node:path');
 test('integrated chrome retains native controls and isolated renderer',()=>{
  const main=fs.readFileSync(path.join(__dirname,'../desktop/main.cjs'),'utf8');
- assert.match(main,/titleBarStyle:'hidden'/);assert.match(main,/titleBarOverlay:\{color:'#141414'/);
+  assert.match(main,/titleBarStyle:'hidden'/);assert.match(main,/titleBarOverlay:\{color:'#131415'/);
  const preload=fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8');
  assert.match(preload,/desktop-shell/);assert.doesNotMatch(preload,/executeJavaScript|insertCSS|sendSync|exposeInMainWorld\(['"](?:require|process|ipcRenderer)/);
 });

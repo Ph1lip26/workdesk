@@ -15,6 +15,23 @@ class Tests(unittest.TestCase):
         self.topic.mkdir(parents=True);(self.topic/'_索引.md').write_text('# 索引\n',encoding='utf-8')
         self.raw=self.vault/'原始资料/已处理';self.raw.mkdir(parents=True);(self.raw/'_处理日志.md').write_text('# 日志\n',encoding='utf-8')
     def tearDown(self):self.temp.cleanup()
+    def test_startup_cache_cannot_overwrite_existing_favorite_metadata(self):
+        store=Store(self.root/'state.sqlite3');media=self.root/'media';folder=media/ID;folder.mkdir(parents=True)
+        cached=dict(aweme_id=ID,desc='Stale cached title',author='Cached author',duration=12,cover_url='https://invalid.test/old.png')
+        (folder/'meta.json').write_text(json.dumps(cached),encoding='utf-8')
+        store.upsert(dict(id=ID,title='Current favorite title',author='Current author',duration=12.75,cover='https://invalid.test/current.png'),favorite=True)
+        before=store.rows('SELECT * FROM videos WHERE id=?',(ID,))[0]
+        service=Mock();service.store=store
+        with patch('core.MEDIA',media):Service.import_local(service)
+        self.assertEqual(store.rows('SELECT * FROM videos WHERE id=?',(ID,))[0],before)
+    def test_startup_cache_still_discovers_missing_records(self):
+        store=Store(self.root/'state.sqlite3');media=self.root/'media';folder=media/ID;folder.mkdir(parents=True)
+        cached=dict(aweme_id=ID,desc='New local material',duration=12.75)
+        (folder/'meta.json').write_text(json.dumps(cached),encoding='utf-8')
+        service=Mock();service.store=store
+        with patch('core.MEDIA',media):Service.import_local(service)
+        row=store.rows('SELECT * FROM videos WHERE id=?',(ID,))[0]
+        self.assertEqual(row['title'],'New local material');self.assertEqual(row['duration'],12.75);self.assertEqual(row['favorite'],0)
     def test_ids(self):
         self.assertEqual(video_id(f'https://www.douyin.com/user/self?modal_id={ID}'),ID)
         self.assertEqual(video_id(ID),ID)
@@ -44,26 +61,40 @@ class Tests(unittest.TestCase):
         self.assertEqual(s.snapshot()['navigation_motion'],'on')
         self.assertEqual(Store(self.root/'db.sqlite3').setting('navigation_motion'),'on')
     def test_home_card_order_default_and_persistent(self):
-        s=self.service();order=['douyin','focus','status','later','next']
-        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later'])
+        s=self.service();order=['douyin','focus','status','later','next','materials']
+        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
         self.assertEqual(s.action('home_layout',dict(order=order))['order'],order)
         self.assertEqual(self.service().snapshot()['home_card_order'],order)
     def test_home_card_order_rejects_unknown_duplicate_and_nonlist(self):
         s=self.service()
         for order in (None,{},'status',[],['status']*5,['status','next','focus','douyin','secret'],[{},'next','focus','douyin','later']):
             with self.assertRaises(ValueError):s.action('home_layout',dict(order=order))
-        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later'])
+        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
     def test_home_layout_does_not_change_tasks_or_notes(self):
         s=self.service();s.store.set_setting('paused','1');before=self.vault/'处理文件/AI学习/_索引.md'
         original=before.read_bytes();jobs=s.snapshot()['jobs'];videos=s.snapshot()['videos']
-        s.action('home_layout',dict(order=['later','status','next','focus','douyin']))
+        s.action('home_layout',dict(order=['later','status','next','focus','douyin','materials']))
         self.assertEqual(s.snapshot()['jobs'],jobs);self.assertEqual(s.snapshot()['videos'],videos)
         self.assertEqual(before.read_bytes(),original);self.assertEqual(s.store.setting('paused'),'1');self.assertFalse(s.wake.is_set())
     def test_corrupt_saved_layout_uses_default(self):
         s=self.service()
         for raw in ('bad json','["unknown"]','{}','null'):
             s.store.set_setting('home_card_order',raw)
-            self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later'])
+            self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
+    def test_legacy_five_card_order_is_extended_without_rewriting_settings(self):
+        s=self.service();legacy=['douyin','focus','status','later','next']
+        raw=json.dumps(legacy,separators=(',',':'));s.store.set_setting('home_card_order',raw)
+        self.assertEqual(s.snapshot()['home_card_order'],legacy+['materials'])
+        self.assertEqual(s.store.setting('home_card_order'),raw)
+        self.assertEqual(self.service().snapshot()['home_card_order'],legacy+['materials'])
+        with self.assertRaises(ValueError):s.action('home_layout',dict(order=legacy))
+        self.assertEqual(s.store.setting('home_card_order'),raw)
+    def test_invalid_legacy_order_is_not_migrated(self):
+        s=self.service()
+        for legacy in (['status']*5,['status','next','focus','douyin','unknown'],[{},'next','focus','douyin','later']):
+            raw=json.dumps(legacy);s.store.set_setting('home_card_order',raw)
+            self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
+            self.assertEqual(s.store.setting('home_card_order'),raw)
     def test_navigation_motion_rejects_invalid_values(self):
         s=self.service()
         for mode in (None,'always','<script>',{},True):

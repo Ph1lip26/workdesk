@@ -217,12 +217,16 @@ function transitionNavigation(change){
   const track=now=>{if(generation!==navigationGeneration||userScrolled)return;const t=Math.min(1,(now-started)/duration);workspace.scrollTop=scroll+(scrollEnd-scroll)*ease(t);if(t<1)scrollFrame=requestAnimationFrame(track)};
   scrollFrame=requestAnimationFrame(track);
  }
- Promise.all(navigationAnimations.map(a=>a.finished)).then(()=>{
+ const finish=()=>{
   if(generation!==navigationGeneration)return;
   navigationAnimations.forEach(a=>a.cancel());navigationAnimations=[];restore();navigationReflow=null;
   if(!userScrolled)workspace.scrollTop=scrollEnd;
   document.body.classList.remove('nav-moving');
- }).catch(()=>{});
+ };
+ // If Chromium interrupts one effect without a new navigation generation, its
+ // rejected finished promise must also restore flow. Intentional reversals
+ // already advance the generation, so an old cleanup cannot finish a new one.
+ Promise.all(navigationAnimations.map(a=>a.finished)).then(finish,finish);
 }
 function updateNavigationLayout(){
  // One persistent panel, never moved into a modal/top layer.
@@ -235,12 +239,15 @@ function updateNavigationLayout(){
 function updateNavigationToggle(){
  const home=document.body.dataset.module==='home';
  const expanded=!home&&(compactNavigation.matches?compactPanelOpen:!panelCollapsed);
+ // Commit the delay state before the glyph's computed-style reads flush layout.
+ // Otherwise opening inherits the closing visibility delay: text fades while
+ // hidden, then pops into view already almost opaque in native reduced motion.
+ document.body.dataset.navigationExpanded=String(expanded);
  document.body.classList.toggle('nav-open',!home&&compactNavigation.matches&&compactPanelOpen);
  $('panelhost').hidden=home;$('navtoggle').hidden=home;
  $('modulepanel').inert=!expanded;
  $('modulepanel').setAttribute('aria-hidden',String(!expanded));
  setRailGlyphState(expanded);
- document.body.dataset.navigationExpanded=String(expanded);
  $('douyinmodule').setAttribute('aria-label',document.body.dataset.module==='douyin'?(expanded?'抖音收藏，收起导航':'抖音收藏，展开导航'):'打开抖音收藏');
  $('homemodule').removeAttribute('aria-expanded');
  $('homemodule').setAttribute('aria-label',home?'首页，当前模块':'打开首页');

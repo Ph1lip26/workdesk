@@ -1,7 +1,7 @@
 /* Taste read: quiet personal status tiles, not a report or a KPI wall.
    Homepage content is read-only. Reordering persists only generic tile IDs. */
 const moduleRegistry={home:{title:'首页',view:'homeview',nav:null,button:'homemodule'},douyin:{title:'抖音收藏',view:'douyinview',nav:'douyinnav',button:'douyinmodule'}};
-const HOME_CARD_IDS=['status','next','focus','douyin','later'];
+const HOME_CARD_IDS=['status','next','focus','douyin','later','materials'];
 let currentModule='home',homeState=null,homeFingerprint='',homeBusy=false,homeDetail=null;
 let homeOrder=[...HOME_CARD_IDS],homeSavedOrder=[...HOME_CARD_IDS],homePendingSaves=0,homeSaveChain=Promise.resolve(),homeDrag=null,homeDeferredRender=false;
 const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0};
@@ -32,7 +32,8 @@ function selectModule(name,{animate=true}={}){
  if(animate&&navigationMotionEnabled())$(moduleRegistry[name].view).animate([{opacity:.4,transform:'translateY(6px)'},{opacity:1,transform:'translateY(0)'}],{duration:240,easing:'cubic-bezier(.22,1,.36,1)'});
 }
 function homeTile(id,title,body,footer='',wide=false){
- return '<article class="home-tile '+(wide?'home-tile-wide':'')+(id==='douyin'?' home-module-card':'')+'" data-home-card="'+id+'" role="listitem" aria-label="'+esc(title)+'"'+(id==='douyin'?' data-module-route="douyin"':'')+'><div class="tile-heading"><h2>'+esc(title)+'</h2><button class="tile-handle" data-home-handle="'+id+'" aria-label="调整'+esc(title)+'的位置" aria-describedby="home-drag-help" aria-pressed="false" title="拖动换位置；空格开始，方向键移动，回车确认">'+homeGrip+'</button></div><div class="tile-body">'+body+'</div>'+(footer?'<div class="tile-foot">'+footer+'</div>':'')+'</article>';
+ const moduleCard=id==='douyin'||id==='materials';
+ return '<article class="home-tile '+(wide?'home-tile-wide':'')+(moduleCard?' home-module-card':'')+'" data-home-card="'+id+'" role="listitem" aria-label="'+esc(title)+'"'+(moduleCard?' data-module-route="douyin"':'')+'><div class="tile-heading"><h2>'+esc(title)+'</h2><button class="tile-handle" data-home-handle="'+id+'" aria-label="调整'+esc(title)+'的位置" aria-describedby="home-drag-help" aria-pressed="false" title="拖动换位置；空格开始，方向键移动，回车确认">'+homeGrip+'</button></div><div class="tile-body">'+body+'</div>'+(footer?'<div class="tile-foot">'+footer+'</div>':'')+'</article>';
 }
 function homeRows(entries,kind,{compact=false}={}){
  return entries.map(item=>'<button class="tile-record '+(compact?'tile-record-compact':'')+'" data-home-detail="'+esc(kind+':'+item.id)+'"><span class="tile-record-top"><span>'+esc(item.title)+'</span><small>'+esc(item.status||'记录')+'</small></span>'+(compact?'':'<span class="tile-record-summary">'+esc(item.summary)+'</span>')+homeArrow+'</button>').join('');
@@ -41,9 +42,10 @@ function renderHomepage(){
  if(homeDrag){homeDeferredRender=true;return}
  const data=homeState;if(!data)return;homeDeferredRender=false;
  const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="重新读取首页">'+homeRefresh+'</button></div></header>';
- const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
+ const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin" data-go-source="favorites">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
+ const materialsTile=()=>homeTile('materials','本地素材','<div id="home-material-summary"><p class="tile-note">正在读取素材记录…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-source="local">查看全部素材'+homeArrow+'</a><span>内容记录</span>');
  if(!data.configured){
-  $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p><div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+'</div>';
+  $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p><div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+materialsTile()+'</div>';
   renderHomepageSummary();applyHomeOrder(homeOrder);return;
  }
  const overview=data.overview||[],upcoming=data.schedule.slice(0,2);
@@ -57,23 +59,30 @@ function renderHomepage(){
  const laterBody=later.length?later.slice(0,2).map(x=>homeRows([x],x.kind,{compact:true})).join(''):'<p class="tile-note">暂无明确的稍后计划</p>';
  const more=(kind,count,label)=>'<button class="home-source quiet" data-home-list="'+kind+'">'+(count>2?'全部 '+count+' 项':label)+homeArrow+'</button>';
  const tiles=[
-  homeTile('status','当前状态',statusBody,'<span class="stage-line">'+esc(route)+'</span>'+sourceButton(data.stage.source,'查看状态'),true),
+  homeTile('status','当前状态',statusBody,'<span class="stage-line">'+esc(route)+'</span>'+sourceButton(data.stage.source,'查看状态')),
   homeTile('next','近期安排',nextBody,more('next',data.schedule.length,'查看安排')+'<span>已有记录</span>'),
   homeTile('focus','需要留意',focusBody,'<span>未确认</span>'+more('focus',attention.length,'查看详情')),
   moduleTile(),
-  homeTile('later','稍后计划',laterBody,'<span>尚未启动</span>'+more('later',later.length,'查看详情'))
+  homeTile('later','稍后计划',laterBody,'<span>尚未启动</span>'+more('later',later.length,'查看详情')),
+  materialsTile()
  ];
  $('homeview').innerHTML=head+'<p id="home-drag-help" class="sr-only">拖动右上角换位置。键盘空格或回车拿起，方向键移动，回车放下，Escape取消。</p><div id="home-cards" class="home-card-grid" role="list" aria-label="个人状态卡片">'+tiles.join('')+'</div><p id="home-layout-status" class="sr-only" role="status" aria-live="polite"></p>';
  syncHomeOrder();renderHomepageSummary();applyHomeOrder(homeOrder);
 }
 function renderHomepageSummary(){
  if(homeDrag)return;
- const target=$('home-module-summary');if(!target)return;if(!state){target.innerHTML='<p class="tile-note">收藏数据尚未连接，不显示推测数值。</p>';return}
+ const target=$('home-module-summary');if(!target)return;if(!state){for(const el of [target,$('home-material-summary')])if(el){el.innerHTML='<p class="tile-note">数据尚未连接，不显示推测数值。</p>';delete el.dataset.content}return}
  const favorites=state.videos.filter(v=>v.favorite),done=favorites.filter(saved).length;
  const running=state.jobs.filter(j=>['running','queued'].includes(j.status)).length,review=state.jobs.filter(j=>j.status==='needs_review').length;
  const latest=state.jobs.filter(j=>j.note&&['completed','skipped'].includes(j.status)).sort((a,b)=>b.updated-a.updated)[0];
  const html='<div class="collection-total"><strong>'+favorites.length+'</strong><span>条收藏</span></div><p class="collection-meta">已入库 '+done+' · 未入库 '+(favorites.length-done)+(running?' · 处理中 '+running:'')+(review?' · 待归类 '+review:'')+'</p>'+(latest?'<button class="latest-note quiet" data-open-job="'+esc(latest.id)+'"><span>最近入库</span><strong>'+esc(cleanTitle(state.videos.find(v=>v.id===latest.video)?.title||'知识笔记'))+'</strong>'+homeArrow+'</button>':'<p class="tile-note">选择值得留下的内容</p>');
  if(target.dataset.content!==html){target.innerHTML=html;target.dataset.content=html}
+ const materialTarget=$('home-material-summary');
+ if(materialTarget){
+  const allDone=state.videos.filter(saved).length;
+  const materialHtml='<div class="material-total"><strong>'+state.videos.length+'</strong><span>条内容记录</span></div><p class="material-meta">已入库 '+allDone+' · 未入库 '+(state.videos.length-allDone)+'</p><p class="tile-note material-note">包含收藏与已处理内容</p>';
+  if(materialTarget.dataset.content!==materialHtml){materialTarget.innerHTML=materialHtml;materialTarget.dataset.content=materialHtml}
+ }
  syncHomeOrder();
 }
 function syncHomeOrder(){
@@ -110,10 +119,8 @@ function applyHomeOrder(order,animate=false){
  const grid=$('home-cards');homeOrder=[...order];if(!grid)return;
  const cards=[...grid.children],before=new Map(cards.map(c=>[c,c.getBoundingClientRect()])),focused=document.activeElement;
  homeFlipAnimations.forEach(a=>a.cancel());homeFlipAnimations.clear();
- const columns=getComputedStyle(grid).gridTemplateColumns.split(/\s+/).length,at=order.indexOf('status');
- const wide=columns>1&&columns-at%columns>=2;
  const statusCard=cards.find(c=>c.dataset.homeCard==='status');
- statusCard?.classList.toggle('home-tile-wide',wide);statusCard?.classList.toggle('home-tile-compact',!wide);
+ statusCard?.classList.remove('home-tile-wide');statusCard?.classList.add('home-tile-compact');
  for(const id of order){const card=cards.find(c=>c.dataset.homeCard===id);if(card)grid.append(card)}
  if(grid.contains(focused))focused.focus({preventScroll:true});
  if(animate&&navigationMotionEnabled())for(const card of cards){
@@ -201,6 +208,7 @@ window.addEventListener('blur',()=>finishHomeDrag(true));window.addEventListener
 document.addEventListener('visibilitychange',()=>{if(document.hidden)finishHomeDrag(true)});
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button,a');if(!b)return;
+ if(b.dataset.goSource){e.preventDefault();selectModule('douyin');selectSource(b.dataset.goSource);document.querySelector('.workspace').scrollTop=0;return}
  if(b.dataset.goModule){e.preventDefault();selectModule(b.dataset.goModule);return}
  if(b.hasAttribute('data-home-queue')){selectModule('douyin');$('queuepanel').showModal();return}
  if(b.dataset.homeDetail){const [kind,...id]=b.dataset.homeDetail.split(':');showHomeDetail(kind,id.join(':'));return}

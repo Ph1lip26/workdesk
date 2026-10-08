@@ -13,11 +13,12 @@ async (page) => {
    selectModule('home',{animate:false});await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
    selectModule('douyin',{animate:false});if($('navtoggle').getAttribute('aria-expanded')!=='true')toggleNavigation();
    const start=performance.now(),samples=[];
-   do{await new Promise(requestAnimationFrame);samples.push({t:performance.now()-start,title:+getComputedStyle(document.querySelector('.panel-heading')).opacity,menu:+getComputedStyle(document.querySelector('.panel-nav')).opacity})}while(performance.now()-start<480);
+   do{await new Promise(requestAnimationFrame);samples.push({t:performance.now()-start,title:+getComputedStyle(document.querySelector('.panel-heading')).opacity,menu:+getComputedStyle(document.querySelector('.panel-nav')).opacity,visibility:getComputedStyle(document.querySelector('.panel-link>span')).visibility})}while(performance.now()-start<480);
    return samples;
   });
   const early=frames.find(x=>x.t>=80),mid=frames.find(x=>x.t>=170);
   check(width+': title does not flash on initial reveal',early&&early.title<.65&&early.menu<.65);
+  check(width+': text is actually visible throughout fade, not delayed until its end',frames.filter(x=>x.menu>.01).every(x=>x.visibility==='visible'));
   check(width+': text has a sustained intermediate phase',mid&&mid.menu>.05&&mid.menu<.9&&frames.filter(x=>x.menu>.1&&x.menu<.9).length>=4);
   check(width+': heading leads menu gently',frames.every(x=>x.title+.015>=x.menu));
   check(width+': text settles fully readable',frames.at(-1).title===1&&frames.at(-1).menu===1);

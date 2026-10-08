@@ -25,8 +25,8 @@ async function create(){
   const defaultIcon=path.join(__dirname,'../assets/icon.png');
   let icon=nativeImage.createFromPath(brandFile(home,defaultIcon));
   if(icon.isEmpty())icon=nativeImage.createFromPath(defaultIcon);
-  window=new BrowserWindow({width:1440,height:920,minWidth:800,minHeight:560,title:'Workdesk · 个人工作台',backgroundColor:'#141414',
-    titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:{color:'#141414',symbolColor:'#c8c8c8',height:40}}:{}),
+  window=new BrowserWindow({width:1440,height:920,minWidth:800,minHeight:560,title:'Workdesk · 个人工作台',backgroundColor:'#131415',
+    titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:{color:'#131415',symbolColor:'#d0d3d7',height:40}}:{}),
     icon,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,devTools:false}});
   window.on('close',e=>{if(!quitting){e.preventDefault();window.hide()}});
   window.webContents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));

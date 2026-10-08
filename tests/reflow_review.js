@@ -39,6 +39,10 @@ async(page)=>{
  await page.locator('#prevpage').click();await page.locator('#navtoggle').click();await page.waitForTimeout(80);await page.setViewportSize({width:960,height:720});await page.waitForTimeout(800);
  check('resize during motion restores responsive flow',await page.evaluate(()=>!navigationReflow&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')));
  check('resting cards do not overlap',await page.evaluate(()=>{const r=[...document.querySelectorAll('.card')].map(c=>c.getBoundingClientRect());return r.every((a,i)=>r.every((b,j)=>i===j||a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))}));
+ await page.evaluate(()=>{toggleNavigation();navigationAnimations[0]?.cancel()});await page.waitForTimeout(800);
+ check('external effect interruption also restores flow',await page.evaluate(()=>!navigationReflow&&!document.body.classList.contains('nav-moving')&&navigationAnimations.length===0&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')));
+ await page.locator('#navtoggle').click();await page.waitForTimeout(800);
+ check('navigation remains usable after external interruption',await page.evaluate(()=>!navigationReflow&&!document.body.classList.contains('nav-moving')&&document.querySelector('.workspace').getBoundingClientRect().right===innerWidth));
  await page.evaluate(async()=>{await api('navigation_motion',{mode:'system'});await refresh()});await page.emulateMedia({reducedMotion:'no-preference'});
  check('no browser/CSP errors',errors.length===0);return {ok:true,checks:checks.length,probe,reverse,errors};
 }

@@ -5,7 +5,7 @@ async (page) => {
  await page.goto(page.url().split('#')[0]+'#douyin');await page.reload();await page.locator('.card').first().waitFor();
  check('synthetic fixture only',await page.locator('.card').first().getAttribute('data-id')==='1000000000000000001');
  check('single visible rail brand',await page.locator('.module-rail .workspace-name').count()===1&&await page.locator('.workspace-name').textContent()==='Workdesk');
- check('local raster W brand loads without an external request',await page.locator('.workspace-mark .workspace-logo').evaluate(e=>e.complete&&e.naturalWidth===512&&e.getAttribute('src')==='/brand.png'));
+ check('local generic brand fallback loads without an external request',await page.locator('.workspace-mark .workspace-logo').evaluate(e=>e.complete&&e.naturalWidth===512&&e.getAttribute('src')==='/brand'));
  check('redundant subtitle and footer removed',await page.locator('.panel-heading p,.panel-footer').count()===0);
  const brandGeometry=()=>{
   const image=document.querySelector('.workspace-logo'),r=image.getBoundingClientRect(),rail=document.querySelector('.module-rail').getBoundingClientRect();
