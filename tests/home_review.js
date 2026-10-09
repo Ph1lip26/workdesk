@@ -12,9 +12,9 @@ async (page,output='build')=>{
  check('no date picker or task completion controls',await page.locator('[data-home-day],#homeview input[type=checkbox]').count()===0);
  check('only two key next records on homepage',await page.locator('#homeview .schedule-record').count()===2);
  check('uncertain original date is not scheduled as confirmed',await page.locator('.schedule-record').first().textContent().then(t=>t.includes('原 ')&&t.includes('日期待确认')));
- check('unstarted plans remain deferred',await page.locator('[data-home-card=later]').textContent().then(t=>t.includes('早期规划')&&t.includes('尚未启动')));
+ check('unstarted plans remain deferred beside purchase entry',await page.locator('[data-home-card=later]').textContent().then(t=>t.includes('早期规划')&&t.includes('购买决策夹')));
  check('collection counters use actual fixture data',await page.locator('.collection-total strong').textContent()==='65'&&await page.locator('.collection-meta').textContent().then(t=>t.includes('已入库 1')));
- check('opening homepage does not mutate or call AI',mutations.length===0);
+ check('opening homepage only refreshes derived data and never calls AI',mutations.every(p=>p==='/api/open_refresh'));
  {const r=await page.locator('[data-home-card=douyin] h2').boundingBox();await page.mouse.click(r.x+r.width/2,r.y+r.height/2);}await page.waitForTimeout(300);
  check('module card heading is a real full-card link',await page.evaluate(()=>currentModule==='douyin'));
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
@@ -22,7 +22,7 @@ async (page,output='build')=>{
  check('module counter click enters its existing library',await page.evaluate(()=>currentModule==='douyin'));
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
  await page.locator('[data-home-card=douyin] .module-entry').focus();await page.keyboard.press('Enter');await page.waitForTimeout(300);
- check('module entry works from keyboard without fake future routes',await page.evaluate(()=>currentModule==='douyin'&&Object.keys(moduleRegistry).length===2));
+ check('module entry works from keyboard without fake future routes',await page.evaluate(()=>currentModule==='douyin'&&Object.keys(moduleRegistry).length===3));
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
  await page.locator('[data-home-handle=douyin]').click();
  check('drag handle click does not navigate away',await page.evaluate(()=>currentModule==='home'));

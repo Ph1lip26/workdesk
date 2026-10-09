@@ -4,7 +4,7 @@ import contextlib, io, json, hashlib, sqlite3, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch,Mock
 from core import Store,Service,BrowserBridge,scan_notes,video_id,SCHEMA,IMAGE_SCHEMA,ROOT,topics,read_json,atomic_json,image_manifest
-from browser_worker import extract_response,atomic_json as browser_atomic_json,login_required_text,retry_collection_scroll
+from browser_worker import extract_response,atomic_json as browser_atomic_json,login_required_text,retry_collection_scroll,wait_until
 
 ID='1000000000000000001'
 class Tests(unittest.TestCase):
@@ -319,7 +319,29 @@ class Tests(unittest.TestCase):
         self.assertIn('document.scrollingElement',script);self.assertIn('scrollTop',script)
         self.assertNotIn('fetch(',script)
         page.mouse.wheel.assert_called_once_with(0,1200)
-        page.wait_for_timeout.assert_called_once_with(2500)
+        page.wait_for_timeout.assert_not_called()
+    def test_response_wait_is_immediate_or_bounded(self):
+        page=Mock()
+        self.assertTrue(wait_until(page,lambda:True,2500))
+        page.wait_for_timeout.assert_not_called()
+        values=iter([False,False,True,True])
+        self.assertTrue(wait_until(page,lambda:next(values),2500))
+        self.assertEqual(page.wait_for_timeout.call_count,2)
+        page.reset_mock()
+        self.assertFalse(wait_until(page,lambda:False,250))
+        self.assertEqual([c.args[0] for c in page.wait_for_timeout.call_args_list],[100,100,50])
+    def test_refresh_progress_ignores_old_worker_and_exposes_no_proof(self):
+        s=self.service();s.sync_started=100;s.sync_phase='connecting';s.sync_lock.acquire()
+        current=dict(status='syncing',updated=110,phase='favorites',message='Reading',count=4,folder_count=2,folder_done=1,favorite_order=[ID],profile='private')
+        try:
+            with patch('core.read_json',return_value=current),patch('core.time.time',return_value=120):
+                p=s.sync_status()['progress'];self.assertEqual(p['elapsed'],20);self.assertEqual(p['count'],4)
+                self.assertNotIn('favorite_order',p);self.assertNotIn('profile',p)
+            current['updated']=99
+            with patch('core.read_json',return_value=current):self.assertNotIn('count',s.sync_status()['progress'])
+            current['updated']=110;s.sync_phase='saving'
+            with patch('core.read_json',return_value=current):self.assertEqual(s.sync_status()['progress']['phase'],'saving')
+        finally:s.sync_lock.release()
     def test_failed_sync_keeps_login_reason_and_cache(self):
         s=self.service();s.store.upsert(dict(id=ID),favorite=True)
         result=s.failed_sync('请扫码','login_required')

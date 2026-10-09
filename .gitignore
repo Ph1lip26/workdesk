@@ -17,6 +17,7 @@ output/
 **/*.jsonl
 **/config.json
 **/homepage.json
+**/appearance.json
 **/snapshot.json
 **/appsettings.json
 **/auth.json

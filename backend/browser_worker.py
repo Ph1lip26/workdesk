@@ -39,7 +39,14 @@ def retry_collection_scroll(page):
         const target=candidates.sort((a,b)=>b.clientWidth*b.clientHeight-a.clientWidth*a.clientHeight)[0] || document.scrollingElement;
         if(target)target.scrollTop=Math.max(0,target.scrollHeight-target.clientHeight-200);
     }""")
-    page.mouse.wheel(0,1200);page.wait_for_timeout(2500)
+    page.mouse.wheel(0,1200)
+
+def wait_until(page, predicate, timeout_ms=1800):
+    """Pump Playwright events until actual collection evidence arrives."""
+    elapsed=0
+    while not predicate() and elapsed<timeout_ms:
+        step=min(100,timeout_ms-elapsed);page.wait_for_timeout(step);elapsed+=step
+    return bool(predicate())
 
 def normalize_video(a):
     vid = str(a.get('aweme_id') or '')
@@ -94,7 +101,7 @@ def main():
                 folder_pages[path]=dict(has_more=d.get('has_more'),count=len(ff))
             elif vv or 'aweme_list' in d:
                 group=(parse_qs(urlparse(u).query).get('collects_id') or ['all'])[0]
-                pagination[group]=dict(has_more=d.get('has_more'),count=len(vv),path=path)
+                pagination[group]=dict(has_more=d.get('has_more'),count=len(vv),path=path,serial=responses)
         except Exception: pass
     with sync_playwright() as p:
         def on_closed():
@@ -154,10 +161,12 @@ def main():
                         state(status='ready' if logged else 'login_required',message=result['message'])
                     elif cmd.get('action')=='sync':
                         videos={};folders={};membership={};favorite_order={};pagination={};responses=0;active=True;diagnostics=[];folder_pages={}
-                        deadline=time.time()+480
-                        state(status='syncing',message='读取收藏页及分页；不修改抖音收藏')
+                        started=time.time();deadline=started+480;folder_done=0
+                        def progress(phase,message):
+                            state(status='syncing',phase=phase,message=message,started=started,elapsed=round(time.time()-started,1),count=len(favorite_order),folder_count=len(folders),folder_done=folder_done)
+                        progress('connecting','正在连接抖音收藏页')
                         page.goto('https://www.douyin.com/user/self?showTab=favorite_collection',wait_until='domcontentloaded',timeout=60000)
-                        page.wait_for_timeout(3500)
+                        wait_until(page,lambda:bool(favorite_order) or login_prompt(page),timeout_ms=4000)
                         if not favorite_order and login_prompt(page):
                             active=False
                             result=dict(ok=False,error_code='login_required',needs_login=True,message='抖音尚未登录，请扫码登录后刷新；旧收藏已保留',
@@ -165,36 +174,42 @@ def main():
                             atomic_json(private/'results'/f"{cmd['id']}.json",result)
                             state(status='login_required',message=result['message']);continue
                         # Use rendered UI, never synthesize signed private API requests.
-                        for label in ('收藏','收藏作品'):
+                        for label in (() if favorite_order else ('收藏','收藏作品')):
                             loc=page.get_by_text(label,exact=True)
                             if loc.count():
-                                try: loc.first.click(timeout=4000);page.wait_for_timeout(2000);break
+                                try: loc.first.click(timeout=4000);wait_until(page,lambda:bool(favorite_order),2500);break
                                 except Exception: pass
                         video_tab=page.get_by_text('视频',exact=True)
-                        for i in range(video_tab.count()):
+                        for i in range(0 if favorite_order else video_tab.count()):
                             if video_tab.nth(i).is_visible():
-                                try:video_tab.nth(i).click(timeout=4000);page.wait_for_timeout(1500);break
+                                try:video_tab.nth(i).click(timeout=4000);wait_until(page,lambda:bool(favorite_order),2000);break
                                 except Exception:pass
                         idle=0; previous=-1
                         for _ in range(min(int(cmd.get('max_scrolls',120)),500)):
                             if time.time()>deadline:break
-                            page.mouse.move(900,650);page.mouse.wheel(0,1800);page.wait_for_timeout(900)
+                            if pagination.get('all',{}).get('has_more') in (0,False) and favorite_order:break
+                            serial=pagination.get('all',{}).get('serial',0)
+                            progress('favorites',f'已读取 {len(favorite_order)} 条收藏，正在检查分页')
+                            page.mouse.move(900,650);page.mouse.wheel(0,1800)
+                            wait_until(page,lambda:pagination.get('all',{}).get('serial',0)!=serial)
                             now=len(videos)
-                            state(status='syncing',message=f'已读取 {now} 个收藏，正在检查分页',count=now)
                             idle=idle+1 if now==previous else 0;previous=now
                             if pagination.get('all',{}).get('has_more') in (0,False) and videos: break
-                            if idle in (4,8,12):retry_collection_scroll(page)
+                            if idle in (4,8,12):
+                                retry_collection_scroll(page);wait_until(page,lambda:pagination.get('all',{}).get('serial',0)!=serial,2500)
                             if idle>=16: break
                         # Load folders only AFTER reaching the end of the main video collection.
                         folder_selector=page.get_by_text('收藏夹',exact=True)
+                        progress('folders','正在核对收藏夹')
                         if folder_selector.count():
-                            try:folder_selector.first.click(timeout=4000);page.wait_for_timeout(1800)
+                            try:folder_selector.first.click(timeout=4000);wait_until(page,lambda:bool(folder_pages),2500)
                             except Exception:pass
                         previous_f=-1;folder_idle=0
                         for _ in range(120):
                             if time.time()>deadline:break
                             if folder_pages and all(f.get('has_more') in (0,False) for f in folder_pages.values()):break
-                            page.mouse.move(300,650);page.mouse.wheel(0,1500);page.wait_for_timeout(700)
+                            before=responses;page.mouse.move(300,650);page.mouse.wheel(0,1500)
+                            wait_until(page,lambda:responses!=before,1200)
                             folder_idle=folder_idle+1 if previous_f==len(folders) else 0;previous_f=len(folders)
                             if folder_idle>=6:break
                         # Discover and visit existing collection UI tabs where available.
@@ -204,15 +219,20 @@ def main():
                             loc=page.get_by_text(name,exact=True)
                             if not loc.count(): continue
                             try:
-                                loc.first.click(timeout=4000);page.wait_for_timeout(1800)
+                                fid=next((f['id'] for f in folders.values() if f['name']==name),'')
+                                progress('folders',f'核对收藏夹 {folder_done+1} / {len(names)}')
+                                serial=pagination.get(fid,{}).get('serial',0)
+                                loc.first.click(timeout=4000);wait_until(page,lambda:pagination.get(fid,{}).get('serial',0)!=serial,2500)
                                 last=-1;idle=0
                                 for _ in range(120):
                                     if time.time()>deadline:break
-                                    n=len(membership);page.mouse.wheel(0,1800);page.wait_for_timeout(700)
-                                    fid=next((f['id'] for f in folders.values() if f['name']==name),'')
                                     if pagination.get(fid,{}).get('has_more') in (0,False):break
+                                    n=len(membership);serial=pagination.get(fid,{}).get('serial',0);page.mouse.wheel(0,1800)
+                                    wait_until(page,lambda:pagination.get(fid,{}).get('serial',0)!=serial,1500)
                                     idle=idle+1 if last==n else 0;last=n
                                     if idle>=6:break
+                                folder_done+=1
+                                progress('folders',f'已核对 {folder_done} / {len(names)} 个收藏夹')
                             except Exception:continue
                         active=False
                         complete=bool(videos) and pagination.get('all',{}).get('has_more') in (0,False)

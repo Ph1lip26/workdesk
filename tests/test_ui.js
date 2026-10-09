@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
 const elements={search:{value:''},status:{value:'all'},sort:{value:'collection'}};
-const context=vm.createContext({document:{querySelector:()=>({content:'test-token'}),getElementById:id=>elements[id]},Set,Map,Number});
+const context=vm.createContext({document:{querySelector:()=>({content:'test-token'}),getElementById:id=>elements[id]},Set,Map,Number,URL});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../backend/static/app.js'),'utf8').split('function render(){')[0],context);
 const fixture={videos:[
 {id:'1000000000000000000',title:'旧视频最近收藏',author:'甲',favorite:1,favorite_position:0,published_at:10,note:'处理文件/AI学习/笔记.md',raw:'原始资料/底稿.md',kind:'video'},
@@ -38,5 +38,36 @@ test('symmetric light ink stays centered and empty branding stays safe',()=>{
 test('unbalanced branding cannot shift out of its logo slot',()=>{
  context.brandPixels=Array.from({length:8*4},(_,i)=>i<4?255:0);
  assert.equal(get('brandInkShift(brandPixels,8,1)'),.12);
+});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../backend/static/purchases.js'),'utf8').split('function renderPurchases(){')[0],context);
+elements['purchase-search']={value:''};elements['purchase-filter']={value:'all'};
+const purchaseFixture={records:[{id:'a',title:'合成设备',category:'数码',needs:'轻便',conclusion:'等待正式信息',wait_condition:'公布后核实',status:'waiting',origin:'advice',budget:'100元',updated:'2026-01-01',candidates:[{name:'测试候选',price:'90元',channel:'合成渠道',checked_at:'2025-01-01'}]},{id:'b',title:'测试配件',category:'设备',needs:'耐用',conclusion:'已选定',wait_condition:'',status:'decided',origin:'user',candidates:[]}]};
+vm.runInContext('purchaseState='+JSON.stringify(purchaseFixture),context);
+test('purchase search composes with explicit status',()=>{elements['purchase-search'].value='测试候选';assert.equal(get('purchaseVisible().length'),1);elements['purchase-filter'].value='decided';assert.equal(get('purchaseVisible().length'),0);elements['purchase-filter'].value='all';elements['purchase-search'].value=''});
+test('purchase context preserves provenance and dated price boundary',()=>{const brief=get('purchaseBrief(purchaseState.records[0])');assert.match(brief,/AI建议/);assert.match(brief,/2025-01-01/);assert.match(brief,/不是实时市场信息/);assert.match(brief,/不替我作购买决定/)});
+test('purchase context has no assumed release date or final model',()=>{const brief=get('purchaseBrief(purchaseState.records[0])');assert.match(brief,/未指定，按条件回看/);assert.match(brief,/不代表发布日期或购买承诺/)});
+test('purchase context remains text and never renders markup',()=>{context.recordWithMarkup={...purchaseFixture.records[0],title:'<script>not executable</script>'};assert.match(get('purchaseBrief(recordWithMarkup)'),/<script>not executable<\/script>/)});
+test('decision selection survives refresh and safely falls back under filtering',()=>{
+ vm.runInContext("purchaseSelectedId='b'",context);assert.equal(get('selectedPurchase().id'),'b');
+ elements['purchase-filter'].value='waiting';assert.equal(get('selectedPurchase().id'),'a');
+ elements['purchase-search'].value='does not exist';assert.equal(get('selectedPurchase()'),null);
+ elements['purchase-search'].value='';elements['purchase-filter'].value='all';vm.runInContext("purchaseSelectedId='missing'",context);assert.equal(get('selectedPurchase().id'),'a');
+});
+test('decision detail escapes saved text while preserving complete fields',()=>{
+ context.detailFixture={...purchaseFixture.records[0],needs:'<script>private text</script>',questions:'Full unanswered question',review_date:''};
+ const html=get('purchaseDetail(detailFixture)');assert.match(html,/&lt;script&gt;private text&lt;\/script&gt;/);assert.doesNotMatch(html,/<script>/);assert.match(html,/Full unanswered question/);assert.match(html,/2025-01-01/);assert.match(html,/90元/);
+});
+test('detail links reject local schemes, script schemes and embedded credentials',()=>{
+ for(const url of ['javascript:alert(1)','file:///private','https://user:password@example.com']){context.linkFixture=url;assert.equal(get("purchaseLink(linkFixture,'资料')"),'')}
+ context.linkFixture='https://example.com/item?q=a&b=c';assert.match(get("purchaseLink(linkFixture,'资料')"),/noopener noreferrer/);assert.match(get("purchaseLink(linkFixture,'资料')"),/&amp;/);
+});
+test('refresh feedback distinguishes elapsed work, partial proof and success',()=>{
+ const running=get("syncFeedback({syncing:true,progress:{started:100,phase:'favorites',message:'Reading 12'},sync:{}},145000)");
+ assert.equal(running.running,true);assert.match(running.title,/12/);assert.match(running.detail,/45/);
+ const partial=get("syncFeedback({syncing:false,sync:{ok:true,complete:true,folders_complete:false,count:12,updated:123,duration:7.4}})");
+ assert.match(partial.title,/完整性待核验/);assert.doesNotMatch(partial.title,/刷新完成/);assert.match(partial.detail,/7/);
+ const complete=get("syncFeedback({syncing:false,sync:{ok:true,complete:true,folders_complete:true,count:12,updated:123,duration:7.4}})");
+ assert.match(complete.title,/刷新完成/);assert.match(complete.title,/12/);
+ const failed=get("syncFeedback({syncing:false,sync:{ok:false,updated:123}})");assert.match(failed.title,/原有收藏已保留/);
 });
 console.log(passed+' frontend logic tests passed.');

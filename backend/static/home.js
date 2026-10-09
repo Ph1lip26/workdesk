@@ -1,10 +1,10 @@
 /* Taste read: quiet personal status tiles, not a report or a KPI wall.
    Homepage content is read-only. Reordering persists only generic tile IDs. */
-const moduleRegistry={home:{title:'首页',view:'homeview',nav:null,button:'homemodule'},douyin:{title:'抖音收藏',view:'douyinview',nav:'douyinnav',button:'douyinmodule'}};
+const moduleRegistry={home:{title:'首页',view:'homeview',nav:null,button:'homemodule'},douyin:{title:'抖音收藏',view:'douyinview',nav:'douyinnav',button:'douyinmodule'},purchases:{title:'购买决策夹',view:'purchaseview',nav:'purchasenav',button:'purchasemodule'}};
 const HOME_CARD_IDS=['status','next','focus','douyin','later','materials'];
 let currentModule='home',homeState=null,homeFingerprint='',homeBusy=false,homeDetail=null;
 let homeOrder=[...HOME_CARD_IDS],homeSavedOrder=[...HOME_CARD_IDS],homePendingSaves=0,homeSaveChain=Promise.resolve(),homeDrag=null,homeDeferredRender=false;
-const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0};
+const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0,purchases:0};
 const homeArrow=document.querySelector('#enqueue svg').outerHTML,homeRefresh=document.querySelector('#sync svg').outerHTML;
 const homeGrip='<svg data-lucide="grip-vertical" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></svg>';
 const sourceMeta=id=>homeState?.sources.find(s=>s.id===id);
@@ -15,7 +15,8 @@ function selectModule(name,{animate=true}={}){
  if(!moduleRegistry[name])return;
  finishHomeDrag(true);homeLandingGhosts.forEach(g=>g.remove());homeLandingGhosts.clear();
  const ws=document.querySelector('.workspace');moduleScroll[currentModule]=ws.scrollTop;
- stopNavigationAnimation();currentModule=name;document.body.dataset.module=name;
+ stopNavigationAnimation();if(name==='purchases'&&compactNavigation.matches)compactPanelOpen=true;
+ currentModule=name;document.body.dataset.module=name;
  for(const [key,m] of Object.entries(moduleRegistry)){
   $(m.view).hidden=key!==name;if(m.nav)$(m.nav).hidden=key!==name;
   $(m.button).classList.toggle('active',key===name);
@@ -24,11 +25,12 @@ function selectModule(name,{animate=true}={}){
  $('paneltitle').textContent=moduleRegistry[name].title;
  $('modulepanel').setAttribute('aria-label',moduleRegistry[name].title+'导航');
  $('selectionbar').hidden=name!=='douyin'||!selection.size;
- document.querySelector('.skip-link').href=name==='home'?'#homeview':'#library';
- document.querySelector('.skip-link').textContent=name==='home'?'跳到首页内容':'跳到作品列表';
+ document.querySelector('.skip-link').href=name==='home'?'#homeview':name==='purchases'?'#purchaseview':'#library';
+ document.querySelector('.skip-link').textContent=name==='home'?'跳到首页内容':name==='purchases'?'跳到购买决策夹':'跳到作品列表';
  document.title='Workdesk · '+moduleRegistry[name].title;history.replaceState(null,'','#'+name);
  updateNavigationToggle();ws.scrollTop=moduleScroll[name];
  if(name==='home'){refreshHomepage();renderHomepageSummary()}
+ if(name==='purchases'&&typeof refreshPurchases==='function')refreshPurchases();
  if(animate&&navigationMotionEnabled())$(moduleRegistry[name].view).animate([{opacity:.4,transform:'translateY(6px)'},{opacity:1,transform:'translateY(0)'}],{duration:240,easing:'cubic-bezier(.22,1,.36,1)'});
 }
 function homeTile(id,title,body,footer='',wide=false){
@@ -44,8 +46,9 @@ function renderHomepage(){
  const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="重新读取首页">'+homeRefresh+'</button></div></header>';
  const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin" data-go-source="favorites">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
  const materialsTile=()=>homeTile('materials','本地素材','<div id="home-material-summary"><p class="tile-note">正在读取素材记录…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-source="local">查看全部素材'+homeArrow+'</a><span>内容记录</span>');
+ const purchaseEntry='<a id="home-purchase-entry" class="home-source quiet" href="#purchases" data-go-module="purchases">购买决策夹'+homeArrow+'</a>';
  if(!data.configured){
-  $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p><div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+materialsTile()+'</div>';
+  $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p>'+purchaseEntry+'<div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+materialsTile()+'</div>';
   renderHomepageSummary();applyHomeOrder(homeOrder);return;
  }
  const overview=data.overview||[],upcoming=data.schedule.slice(0,2);
@@ -63,13 +66,14 @@ function renderHomepage(){
   homeTile('next','近期安排',nextBody,more('next',data.schedule.length,'查看安排')+'<span>已有记录</span>'),
   homeTile('focus','需要留意',focusBody,'<span>未确认</span>'+more('focus',attention.length,'查看详情')),
   moduleTile(),
-  homeTile('later','稍后计划',laterBody,'<span>尚未启动</span>'+more('later',later.length,'查看详情')),
+  homeTile('later','稍后计划',laterBody,purchaseEntry+more('later',later.length,'查看详情')),
   materialsTile()
  ];
  $('homeview').innerHTML=head+'<p id="home-drag-help" class="sr-only">拖动右上角换位置。键盘空格或回车拿起，方向键移动，回车放下，Escape取消。</p><div id="home-cards" class="home-card-grid" role="list" aria-label="个人状态卡片">'+tiles.join('')+'</div><p id="home-layout-status" class="sr-only" role="status" aria-live="polite"></p>';
  syncHomeOrder();renderHomepageSummary();applyHomeOrder(homeOrder);
 }
 function renderHomepageSummary(){
+ if(typeof renderPurchaseHome==='function')renderPurchaseHome();
  if(homeDrag)return;
  const target=$('home-module-summary');if(!target)return;if(!state){for(const el of [target,$('home-material-summary')])if(el){el.innerHTML='<p class="tile-note">数据尚未连接，不显示推测数值。</p>';delete el.dataset.content}return}
  const favorites=state.videos.filter(v=>v.favorite),done=favorites.filter(saved).length;
@@ -91,9 +95,10 @@ function syncHomeOrder(){
  homeSavedOrder=[...order];if(JSON.stringify(homeOrder)!==JSON.stringify(order))applyHomeOrder(order);
 }
 async function refreshHomepage(){
- if(homeBusy)return;homeBusy=true;
- try{const data=await api('home'),key=JSON.stringify(data);homeState=data;if(key!==homeFingerprint){renderHomepage();homeFingerprint=key}}
- catch(e){if(!homeState){homeState={configured:false,error:'个人资料读取失败：'+e.message};renderHomepage()}else toast(e.message)}
+ if(homeBusy)return false;homeBusy=true;
+ if(typeof refreshPurchases==='function'&&!$('purchaseeditor').open)refreshPurchases();
+ try{const data=await api('home'),key=JSON.stringify(data);homeState=data;if(key!==homeFingerprint){renderHomepage();homeFingerprint=key}return true}
+ catch(e){if(!homeState){homeState={configured:false,error:'个人资料读取失败：'+e.message};renderHomepage()}else toast(e.message);return false}
  finally{homeBusy=false}
 }
 function showHomeDetail(kind,id){
@@ -215,11 +220,11 @@ document.addEventListener('click',async e=>{
  if(b.dataset.homeList){showHomeList(b.dataset.homeList);return}
  if(b.dataset.homeSource){b.disabled=true;try{await api('open_home_note',{source:b.dataset.homeSource})}catch(err){toast(err.message)}finally{b.disabled=false}return}
  if(b.id==='home-reset'){finishHomeDrag(true);applyHomeOrder(HOME_CARD_IDS,true);await persistHomeOrder();return}
- if(b.id==='home-refresh'){homeFingerprint='';await refresh();await refreshHomepage()}
+ if(b.id==='home-refresh')await refreshWithFeedback('home-refresh',async()=>{const libraryOK=await refresh(),homeOK=await refreshHomepage();return libraryOK!==false&&homeOK!==false})
 });
 $('homemodule').onclick=()=>{if(currentModule!=='home')selectModule('home')};
 $('douyinmodule').onclick=()=>currentModule==='douyin'?toggleNavigation():selectModule('douyin');
 $('closehomedetail').onclick=()=>$('homedetail').close();
 window.addEventListener('hashchange',()=>{const name=location.hash.slice(1);if(name in moduleRegistry&&name!==currentModule)selectModule(name)});
-selectModule(location.hash==='#douyin'||location.hash==='#library'?'douyin':'home',{animate:false});
+selectModule(location.hash==='#library'?'douyin':moduleRegistry[location.hash.slice(1)]?location.hash.slice(1):'home',{animate:false});
 setInterval(()=>{if(currentModule==='home')refreshHomepage()},15000);

@@ -19,6 +19,9 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   // probes run. Do not let a hidden fixture stall its promises or rAF loops;
   // the real application's normal background policy remains unchanged.
   wc.setBackgroundThrottling(false);
+  // Windows fractional-DPI non-client insets add 2-3 DIP; source dimensions are also asserted in desktop.test.
+  log.info('DEFAULT_BOUNDS '+JSON.stringify(w.getBounds()));
+  check('default window is a smaller 1180 by 760 rectangle',Math.abs(w.getBounds().width-1180)<=4&&Math.abs(w.getBounds().height-760)<=4);
   const errors=[];wc.on('console-message',(_event,...args)=>{const details=args[0];if(details?.level==='error')errors.push(details.message)});
   async function js(code){return wc.executeJavaScript(code)}
   async function navigationSettled(){
@@ -34,10 +37,191 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   for(let n=0;n<80;n++){if(await js("typeof homeState!=='undefined'&&homeState?.configured&&document.querySelectorAll('.card').length===30"))break;await sleep(100)}
   check('native default page is personal home',await js("document.body.dataset.module==='home'&&!document.getElementById('homeview').hidden"));
   check('homepage has a real stage and four current subjects',await js("document.querySelector('.tile-phase h3').textContent==='测试阶段'&&document.querySelectorAll('.status-record').length===4"));
-  check('homepage and library are separate registered modules',await js("Object.keys(moduleRegistry).length===2&&document.getElementById('douyinview').hidden"));
+  check('homepage and library are separate registered modules',await js("Object.keys(moduleRegistry).length===3&&document.getElementById('douyinview').hidden"));
   check('home has six movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===6"));
   check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('navtoggle').hidden&&document.getElementById('modulepanel').inert"));
   check('home content starts at primary rail',await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.querySelector('.module-rail').getBoundingClientRect().right)<1"));
+  if(process.env.WORKDESK_SMOKE_SCOPE==='performance'){
+    await js("selectModule('douyin',{animate:false});updateNavigationMotion('on')");await navigationSettled();
+    const probes=[];
+    for(const mode of ['day','night']){
+     await js(`paintAppearance('${mode}')`);await sleep(150);
+     for(let run=0;run<4;run++){
+      const probe=await js(`(async()=>{
+       const intervals=[],tasks=[],samples=[],cards=[...document.querySelectorAll('.card')];
+       const observer=new PerformanceObserver(list=>tasks.push(...list.getEntries().map(e=>e.duration)));observer.observe({type:'longtask'});
+       let last=performance.now(),start=last;toggleNavigation();
+       await new Promise(resolve=>{const tick=now=>{intervals.push(now-last);last=now;const r=cards[0].getBoundingClientRect();samples.push([r.left,r.width]);if(now-start<750)requestAnimationFrame(tick);else resolve()};requestAnimationFrame(tick)});
+       observer.disconnect();return {frames:intervals.length,max:Math.max(...intervals),over33:intervals.filter(x=>x>33).length,longTasks:tasks,distinct:new Set(samples.map(x=>x.map(n=>Math.round(n)).join(','))).size,identity:cards.every((c,i)=>c===document.querySelectorAll('.card')[i]),clean:!navigationReflow};
+      })()`);probes.push({mode,run,...probe});await navigationSettled();
+     }
+    }
+    fs.writeFileSync(path.join(fixture,'performance.json'),JSON.stringify(probes,null,2));log.info('PERFORMANCE '+JSON.stringify(probes));
+    check('performance samples preserve real card identity and restore flow',probes.every(p=>p.identity&&p.clean));
+    check('every native motion run samples at least 21 frames',probes.every(p=>p.frames>20));
+    fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,checks}));await desk.quit();return;
+   }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='shell'){
+   for(let n=0;n<40;n++){if(await js("openingRefreshCount>=1&&!openingRefresh&&state"))break;await sleep(100)}
+   check('startup silently refreshes all registered modules',await js("openingRefreshCount>=1&&lastOpeningReport?.ok&&lastOpeningReport.remote==='disabled'"));
+   await js(`window.__refreshTest={original:api,requests:0,data:{syncing:true,progress:{started:Date.now()/1000-32,phase:'favorites',message:'已读取 25 条收藏，正在检查分页'},sync:{}}};api=async(name,payload)=>{const t=window.__refreshTest;if(name==='sync'){t.requests++;await new Promise(r=>setTimeout(r,200));return {ok:true}}if(name==='sync_status')return t.data;const out=await t.original(name,payload);if(name==='state')return {...out,syncing:t.data.syncing,sync_progress:t.data.progress,sync:t.data.sync};return out};selectModule('douyin',{animate:false});window.__refreshCards=[...document.querySelectorAll('.card')];window.__refreshJobs=JSON.stringify(state.jobs);document.getElementById('sync').click()`);
+   check('refresh acknowledges the click before backend acceptance',await js("syncPending&&document.getElementById('sync').disabled&&document.getElementById('sync-stage').textContent.includes('启动')"));
+   await js("document.getElementById('sync').click()");await sleep(300);
+   check('double click starts only one refresh',await js('window.__refreshTest.requests'),1);
+   check('refresh shows actual stage and elapsed seconds',await js("document.getElementById('sync-stage').textContent.includes('25')&&/3[2-5] 秒/.test(document.getElementById('sync-elapsed').textContent)"));
+   check('unknown completion has no invented percentage',await js("!document.getElementById('sync-track').hidden&&!document.getElementById('sync-track').hasAttribute('aria-valuenow')"));
+   await js("window.__refreshTest.data={syncing:false,progress:{},sync:{ok:true,complete:true,folders_complete:false,count:65,duration:7.4,updated:Date.now()/1000}};pollSyncStatus()");await sleep(200);
+   check('partial refresh is not labelled complete',await js("document.getElementById('sync-stage').textContent.includes('完整性待核验')&&document.getElementById('sync-elapsed').textContent.includes('用时 7 秒')&&!document.getElementById('sync').disabled"));
+   check('progress updates do not remount cards or change jobs',await js("window.__refreshCards.every((c,i)=>c===document.querySelectorAll('.card')[i])&&window.__refreshJobs===JSON.stringify(state.jobs)"));
+   await js("window.__refreshTest.data={syncing:false,progress:{},sync:{ok:false,updated:Date.now()/1000,duration:9}};pollSyncStatus()");await sleep(100);
+   check('failed refresh visibly preserves the list',await js("document.getElementById('sync-stage').textContent.includes('原有收藏已保留')&&document.querySelectorAll('.card').length===30"));
+   await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'refresh-progress.png'),img.toPNG()));
+   await js("api=window.__refreshTest.original;delete window.__refreshTest;syncStatus=null;syncTransportError='';syncObserved=false;fingerprint='';refresh();selectModule('home',{animate:false})");await sleep(150);
+
+   const jobsBefore=await js('JSON.stringify(state.jobs)'),orderBefore=await js('JSON.stringify(homeOrder)');
+   check('existing mode defaults to night',await js("appearanceMode==='night'&&document.documentElement.dataset.appearance==='night'"));
+   await js("document.getElementById('toolsopen').click();document.getElementById('appearance-mode').value='day';document.getElementById('appearance-mode').dispatchEvent(new Event('change'))");
+   for(let n=0;n<30;n++){if(await js("appearanceMode==='day'&&!appearanceSaving"))break;await sleep(100)}
+   check('settings selector switches the whole document to day',await js("appearanceMode==='day'&&document.getElementById('appearance-mode').value==='day'"));
+   check('native frame background matches the day document',w.getBackgroundColor().toLowerCase(),'#d2d2d2');
+   check('day popup has readable dark ink and light surface',await js("getComputedStyle(document.getElementById('tools')).backgroundColor.startsWith('rgba(222, 222, 222,')&&getComputedStyle(document.getElementById('tools')).color==='rgb(35, 35, 35)'"));
+   await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-tools.png'),img.toPNG()));
+   await js("document.getElementById('tools').close()");
+   check('day home cards share one aluminium material',await js("(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundColor==='rgb(224, 224, 224)'&&c.backgroundImage.includes('feTurbulence'))&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
+   for(const [width,height] of [[1440,920],[800,560]]){
+    w.setContentSize(width,height);await sleep(180);
+    check(`${width}: day home still fits one viewport`,await js("(()=>{const ws=document.querySelector('.workspace');return ws.scrollHeight<=ws.clientHeight+1&&document.documentElement.scrollWidth<=innerWidth})()"));
+   }
+   w.setContentSize(1440,920);await sleep(120);
+   await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-home.png'),img.toPNG()));
+   await wc.reload();await sleep(1000);
+   check('day preference is embedded before first renderer paint',await js("document.documentElement.dataset.appearance==='day'&&appearanceMode==='day'&&state.appearance==='day'"));
+   await js("document.getElementById('purchasemodule').click()");await sleep(200);
+   await js("document.getElementById('purchase-new').click();document.getElementById('purchase-title').value='Unsaved synthetic decision';document.getElementById('purchase-title').dispatchEvent(new Event('input',{bubbles:true}))");
+   const refreshBefore=await js('openingRefreshCount');await sleep(1300);w.hide();desk.show();
+   for(let n=0;n<40;n++){if(await js(`openingRefreshCount>${refreshBefore}&&!openingRefresh`))break;await sleep(100)}
+   check('tray reopening triggers refresh without a page reload',await js(`openingRefreshCount>${refreshBefore}&&currentModule==='purchases'`));
+   check('reopen refresh preserves unsaved purchase edits',await js("document.getElementById('purchaseeditor').open&&document.getElementById('purchase-title').value==='Unsaved synthetic decision'"));
+   await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-editor.png'),img.toPNG()));
+   const coalesced=await js('openingRefreshCount');desk.show();desk.show();await sleep(300);
+   check('duplicate show and focus events coalesce',await js('openingRefreshCount'),coalesced);
+   await js("document.getElementById('purchase-editor-close').click();document.getElementById('purchase-discard-confirm').click()");
+   await js("document.getElementById('douyinmodule').click()");await navigationSettled();
+   await js("pageNumber=2;selection.add(state.videos[1].id);render()");
+   const selected=await js('JSON.stringify([...selection])');
+   await sleep(1300);w.minimize();desk.show();await sleep(500);
+   check('restore retains library page and selected videos',await js("pageNumber===2&&JSON.stringify([...selection])==="+JSON.stringify(selected)));
+   check('day library and sidebar use dark ink',await js("getComputedStyle(document.querySelector('.card-title')).color==='rgb(35, 35, 35)'&&getComputedStyle(document.querySelector('.module-panel')).backgroundColor==='rgb(200, 200, 200)'"));
+   await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-library.png'),img.toPNG()));
+   await js("document.getElementById('queueopen').click()");
+   check('day queue matches popup material',await js("getComputedStyle(document.getElementById('queuepanel')).color==='rgb(35, 35, 35)'"));
+   await js("document.getElementById('queuepanel').close();changeAppearance('night')");
+   check('night native chrome returns to the original palette',w.getBackgroundColor().toLowerCase(),'#131415');
+   // Fixture process only. NativeTheme is the test app's themeSource, not a
+   // Windows registry/theme setting. Production never writes this property.
+   const nativeTheme=require('electron').nativeTheme,originalTheme=nativeTheme.themeSource;
+   try{
+    nativeTheme.themeSource='light';await sleep(150);await js("changeAppearance('system')");await sleep(200);
+    check('system mode resolves light and remembers the distinct preference',await js("appearanceMode==='system'&&document.documentElement.dataset.appearance==='day'&&document.getElementById('appearance-mode').value==='system'"));
+    check('system preference persists rather than saving the resolved color',JSON.parse(fs.readFileSync(path.join(fixture,'appearance.json'),'utf8')).mode,'system');
+    await wc.reload();await sleep(800);
+    check('saved system choice resolves on reload before CSS is shown',await js("appearanceMode==='system'&&document.documentElement.dataset.appearance==='day'&&[...document.head.children].findIndex(e=>e.getAttribute('src')==='/theme.js')<[...document.head.children].findIndex(e=>e.getAttribute('href')==='/style.css')"));
+    nativeTheme.themeSource='dark';await sleep(350);
+    check('live OS dark change updates page and native titlebar without reloading',await js("appearanceMode==='system'&&document.documentElement.dataset.appearance==='night'")&&w.getBackgroundColor().toLowerCase()==='#131415');
+    nativeTheme.themeSource='light';await sleep(350);
+    check('live OS light change updates page and native titlebar without reloading',await js("appearanceMode==='system'&&document.documentElement.dataset.appearance==='day'")&&w.getBackgroundColor().toLowerCase()==='#d2d2d2');
+    await js("changeAppearance('night')");nativeTheme.themeSource='dark';await sleep(100);nativeTheme.themeSource='light';await sleep(250);
+    check('explicit night ignores subsequent OS theme changes',await js("appearanceMode==='night'&&document.documentElement.dataset.appearance==='night'")&&w.getBackgroundColor().toLowerCase()==='#131415');
+   }finally{nativeTheme.themeSource=originalTheme}
+   await js("document.getElementById('homemodule').click()");await sleep(200);
+   check('night metal finish and opacity are preserved',await js("getComputedStyle(document.querySelector('.home-tile')).backgroundColor==='rgb(46, 48, 52)'&&getComputedStyle(document.querySelector('.home-tile')).backgroundImage.includes('feTurbulence')"));
+   check('opening does not reset tasks or card order',await js('JSON.stringify(state.jobs)')===jobsBefore&&await js('JSON.stringify(homeOrder)')===orderBefore);
+   const setupTheme=require('electron').nativeTheme,savedTheme=setupTheme.themeSource;
+   try{
+    setupTheme.themeSource='light';await sleep(100);await js("changeAppearance('system')");
+    await w.loadFile(payload?path.join(process.resourcesPath,'app.asar/desktop/setup.html'):path.join(__dirname,'../desktop/setup.html'));await sleep(300);
+    check('configuration page also resolves the saved system mode',await js("document.documentElement.dataset.appearanceMode==='system'&&document.documentElement.dataset.appearance==='day'&&getComputedStyle(document.documentElement).backgroundColor==='rgb(210, 210, 210)'"));
+    await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-setup.png'),img.toPNG()));
+    setupTheme.themeSource='dark';await sleep(300);
+    check('configuration page follows live system changes',await js("document.documentElement.dataset.appearance==='night'")&&w.getBackgroundColor().toLowerCase()==='#131415');
+    await w.loadURL(desk.origin+'#home');await sleep(700);await js("changeAppearance('night')");
+   }finally{setupTheme.themeSource=savedTheme}
+   check('shell scope has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'shell',checks},null,2));
+   log.info(`Shell native smoke: ${checks.length} checks passed`);await desk.quit();return;
+  }
+  await js("document.getElementById('homemodule').click()");await sleep(200);
+  check('purchase entry reuses the existing six-card home',await js("document.querySelector('#home-purchase-entry')&&document.querySelectorAll('#home-cards article').length===6"));
+  const homeOrderBefore=await js('JSON.stringify(homeOrder)');
+  await js("document.getElementById('home-purchase-entry').click()");await sleep(250);
+  check('purchase homepage entry reaches its real module',await js("currentModule==='purchases'&&!document.getElementById('purchaseview').hidden"));
+  check('purchase module uses its own real secondary navigation',await js("!document.getElementById('panelhost').hidden&&!document.getElementById('purchasenav').hidden&&!document.getElementById('navtoggle').hidden&&document.getElementById('douyinnav').hidden"));
+  check('purchase detail connects directly to its navigation',await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.querySelector('.module-panel').getBoundingClientRect().right)<1"));
+  await js("document.getElementById('purchase-new').click();document.getElementById('purchase-title').value='合成购买事项';document.getElementById('purchase-title').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('purchase-needs').value='轻便，排除旧款';document.getElementById('purchase-budget').value='100元';document.getElementById('purchase-status').value='waiting';document.getElementById('purchase-origin').value='advice';document.getElementById('purchase-conclusion').value='等待正式资料';document.getElementById('purchase-wait_condition').value='公布后核对';document.getElementById('purchase-editor-close').click()");
+  check('dirty close retains edits with explicit discard choice',await js("document.getElementById('purchaseeditor').open&&!document.getElementById('purchase-discard').hidden&&document.getElementById('purchase-title').value==='合成购买事项'"));
+  await js("document.getElementById('purchase-discard-keep').click();document.getElementById('purchase-candidate-add').click();document.querySelector('[data-candidate-field=name]').value='合成候选';document.querySelector('[data-candidate-field=price]').value='90元';document.querySelector('[data-candidate-field=checked_at]').value='2025-01-01';document.getElementById('purchaseform').requestSubmit()");
+  for(let n=0;n<40;n++){if(await js("purchaseState?.records.some(r=>r.title==='合成购买事项')&&!document.getElementById('purchaseeditor').open"))break;await sleep(100)}
+  check('purchase save roundtrips actual SQLite data',await js("purchaseState.records.some(r=>r.title==='合成购买事项'&&r.candidates[0].price==='90元'&&r.origin==='advice'&&r.revision===1)"));
+  check('purchase details reuse one opaque brushed material',await js("(()=>{const p=getComputedStyle(document.querySelector('.purchase-section')),h=getComputedStyle(document.querySelector('.home-tile'));return p.backgroundColor===h.backgroundColor&&p.backgroundImage===h.backgroundImage})()"));
+  const purchaseId=await js("purchaseState.records.find(r=>r.title==='合成购买事项').id");
+  await js(`showPurchaseBrief(${JSON.stringify(purchaseId)})`);
+  check('purchase brief shows historical prices and AI provenance',await js("document.getElementById('purchasebrief').open&&document.getElementById('purchase-brief-text').value.includes('2025-01-01')&&document.getElementById('purchase-brief-text').value.includes('AI建议')&&document.getElementById('purchase-brief-text').value.includes('不是实时市场信息')"));
+  desk.show();await sleep(200);
+  const copyPoint=await js("(()=>{const r=document.getElementById('purchase-brief-copy').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+  wc.sendInputEvent({type:'mouseMove',...copyPoint});wc.sendInputEvent({type:'mouseDown',...copyPoint,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...copyPoint,button:'left',clickCount:1});await sleep(200);
+  check('native user click copies context without account or API',(await require('electron').clipboard.readText()).includes('合成购买事项'));
+  await js("document.getElementById('purchasebrief').close()");
+  await wc.reload();await sleep(800);
+  check('purchase deep route and saved data survive reload',await js("currentModule==='purchases'&&purchaseState.records.some(r=>r.id==="+JSON.stringify(purchaseId)+")"));
+  await js("document.getElementById('purchase-search').value='不存在的候选';document.getElementById('purchase-search').dispatchEvent(new Event('input'))");
+  check('purchase empty search has real feedback',await js("document.querySelector('.purchase-empty h2').textContent==='没有匹配的记录'"));
+  await js("document.getElementById('purchase-search').value='';document.getElementById('purchase-search').dispatchEvent(new Event('input'))");
+  for(const [width,height] of [[1440,920],[800,560]]){
+   w.setContentSize(width,height);await sleep(150);
+   check(`${width}: purchase view has no horizontal overflow`,await js("document.documentElement.scrollWidth<=innerWidth&&document.querySelector('.workspace').scrollWidth<=document.querySelector('.workspace').clientWidth"));
+  }
+  w.setContentSize(1440,920);await sleep(150);
+  await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'purchase-smoke.png'),img.toPNG()));
+  await js("document.getElementById('homemodule').click()");await sleep(250);
+  check('purchase work does not rewrite user home order',await js('JSON.stringify(homeOrder)'),homeOrderBefore);
+  check('home purchase summary counts active records',await js("document.getElementById('home-purchase-entry').textContent.includes('1')"));
+  if(process.env.WORKDESK_SMOKE_SCOPE==='purchases'){
+   await js("document.getElementById('home-purchase-entry').click()");await navigationSettled();
+   check('all decision titles live in the secondary panel',await js("document.querySelectorAll('#purchase-nav-list [data-purchase-select]').length===1&&!document.querySelector('#purchaseview .purchase-grid')&&document.getElementById('purchase-detail-title').textContent==='合成购买事项'"));
+   check('selected item renders full needs, conclusion, conditions and candidates',await js("document.getElementById('purchase-list').textContent.includes('轻便，排除旧款')&&document.getElementById('purchase-list').textContent.includes('等待正式资料')&&document.getElementById('purchase-list').textContent.includes('公布后核对')&&document.getElementById('purchase-list').textContent.includes('合成候选')&&document.getElementById('purchase-list').textContent.includes('2025-01-01')"));
+   await js("(async()=>{for(let n=0;n<13;n++)await api('purchase_save',{record:{title:'Synthetic extra '+n,status:'research',origin:'user',needs:'Full detail '+n}});await refreshPurchases()})()");
+   check('secondary list shows every title without old card pagination',await js("document.querySelectorAll('#purchase-nav-list [data-purchase-select]').length===14&&!document.getElementById('purchase-pages')"));
+   await js("(()=>{const r=purchaseState.records.find(x=>x.title==='Synthetic extra 5');document.querySelector('[data-purchase-select=\"'+r.id+'\"]').click()})()");
+   check('clicking a title displays its exact detail, not the editor',await js("document.getElementById('purchase-detail-title').textContent==='Synthetic extra 5'&&document.getElementById('purchase-list').textContent.includes('Full detail 5')&&!document.getElementById('purchaseeditor').open"));
+   const selectedId=await js('purchaseSelectedId');
+   await js("refreshPurchases()");check('refresh retains the selected decision',await js('purchaseSelectedId'),selectedId);
+   await js("document.getElementById('purchase-edit').click();document.getElementById('purchase-needs').value='Unsaved master detail';document.getElementById('purchase-needs').dispatchEvent(new Event('input',{bubbles:true}));refreshPurchases()");
+   check('editor remains explicit and refresh cannot erase its draft',await js("document.getElementById('purchaseeditor').open&&document.getElementById('purchase-needs').value==='Unsaved master detail'"));
+   await js("document.getElementById('purchase-editor-close').click();document.getElementById('purchase-discard-confirm').click();document.getElementById('purchase-copy').click()");
+   check('detail copy action uses the selected record',await js("document.getElementById('purchasebrief').open&&document.getElementById('purchase-brief-text').value.includes('Synthetic extra 5')"));
+   await js("document.getElementById('purchasebrief').close();document.querySelector('#purchase-nav-list [data-purchase-select]').focus();document.getElementById('purchase-nav-list').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))");
+   check('decision list supports keyboard selection',await js("document.activeElement.dataset.purchaseSelect===purchaseSelectedId&&purchaseSelectedId===purchaseVisible().at(-1).id"));
+   for(const mode of ['day','night']){
+    await js(`changeAppearance(${JSON.stringify(mode)})`);
+    for(const [width,height] of [[1440,920],[800,560]]){
+     w.setContentSize(width,height);await sleep(150);await navigationSettled();
+     if(width===800&&await js('!compactPanelOpen')){await js('toggleNavigation()');await navigationSettled()}
+     check(`${mode} ${width}: decision panel and detail stay connected without overflow`,await js("(()=>{const ws=document.querySelector('.workspace'),p=document.querySelector('.module-panel');return !p.inert&&Math.abs(ws.getBoundingClientRect().left-p.getBoundingClientRect().right)<1&&ws.scrollWidth<=ws.clientWidth&&document.documentElement.scrollWidth<=innerWidth})()"));
+     await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,`purchase-detail-${mode}-${width}.png`),img.toPNG()));
+    }
+   }
+   w.setContentSize(1440,920);await sleep(200);
+   desk.show();await sleep(250);await navigationSettled();
+   const itemPoint=await js("(()=>{const b=document.querySelector('#purchase-nav-list [data-purchase-select]');b.scrollIntoView({block:'nearest'});const r=b.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),id:b.dataset.purchaseSelect}})()");
+   wc.sendInputEvent({type:'mouseMove',x:itemPoint.x,y:itemPoint.y});wc.sendInputEvent({type:'mouseDown',x:itemPoint.x,y:itemPoint.y,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',x:itemPoint.x,y:itemPoint.y,button:'left',clickCount:1});await sleep(200);
+   check('real pointer input selects a title in the panel',await js('purchaseSelectedId'),itemPoint.id);
+   check('search and new-item controls remain visible while decision titles scroll',await js("(()=>{const a=document.getElementById('purchase-search').getBoundingClientRect(),b=document.getElementById('purchase-new').getBoundingClientRect(),p=document.getElementById('modulepanel').getBoundingClientRect();return a.top>=p.top&&b.bottom<=p.bottom&&getComputedStyle(document.getElementById('purchase-nav-list')).overflowY==='auto'})()"));
+   await js("document.getElementById('douyinmodule').click()");await navigationSettled();
+   check('switching modules hides only the purchase navigation',await js("document.getElementById('purchasenav').hidden&&!document.getElementById('douyinnav').hidden&&document.querySelectorAll('.card').length===30"));
+   check('purchase scope has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'purchases',checks},null,2));
+   log.info(`Purchase native smoke: ${checks.length} checks passed`);await desk.quit();return;
+  }
   for(const [width,height] of [[1440,920],[1080,620],[800,560]]){
    w.setContentSize(width,height);await sleep(180);
    check(`${width}: native logo has optical ink alignment`,await js("document.querySelector('.workspace-logo').dataset.brandAligned==='true'&&getComputedStyle(document.querySelector('.workspace-logo')).objectFit==='cover'"));
@@ -59,7 +243,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('native evidence date remains visible',await js("document.querySelector('.tile-evidence').textContent.includes('最新实报')"));
   check('native generic brand fallback is local and loaded',await js("(()=>{const img=document.querySelector('.workspace-logo');return img.complete&&img.naturalWidth===512&&img.getAttribute('src')==='/brand'})()"));
   check('native large-window summaries use the revised readable hierarchy',await js("parseFloat(getComputedStyle(document.querySelector('.tile-record-summary')).fontSize)>=16&&parseFloat(getComputedStyle(document.querySelector('.collection-total strong')).fontSize)>parseFloat(getComputedStyle(document.querySelector('.tile-phase h3')).fontSize)"));
-  check('native cards have natural larger corners and one shared brushed metal finish',await js("parseFloat(getComputedStyle(document.querySelector('.home-tile')).borderRadius)>=28&&(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundImage.includes('repeating-linear-gradient'))&&new Set(s.map(c=>c.backgroundColor)).size===1&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
+  check('native cards have natural larger corners and one shared brushed metal finish',await js("parseFloat(getComputedStyle(document.querySelector('.home-tile')).borderRadius)>=28&&(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundImage.includes('feTurbulence')&&!c.backgroundImage.includes('repeating-linear-gradient'))&&new Set(s.map(c=>c.backgroundColor)).size===1&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
   check('native local-material card shows records with honest wording',await js("document.querySelector('.material-total strong').textContent==='65'&&document.querySelector('.material-note').textContent.includes('包含收藏')"));
   check('native material cards have no backdrop filter workload',await js("getComputedStyle(document.querySelector('.home-tile')).backdropFilter==='none'&&getComputedStyle(document.body,'::before').pointerEvents==='none'"));
   // Real pointer input needs a settled, active window; the launcher itself is hidden.
@@ -140,9 +324,13 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    // Sample the middle of the 360ms text fade. A capture near its leading edge
    // may still be the compositor's preceding dark frame; it is not a no-text bug.
    await js('toggleNavigation()');await sleep(180);
+   // Freeze this sampled pose so async screenshot capture cannot race a moving
+   // text rectangle. Resume only after inspecting its actual painted pixels.
+   await js("document.getAnimations().filter(a=>a.effect?.target?.closest?.('#modulepanel')).forEach(a=>{const t=a.effect.getTiming();a.pause();a.currentTime=t.delay+Number(t.duration)*.5})");
+   await js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");
    const text=await js("(()=>{const el=document.querySelector('.panel-link>span'),r=el.getBoundingClientRect(),rgb=e=>getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0,3).map(Number);return {visibility:getComputedStyle(el).visibility,titleVisibility:getComputedStyle(document.querySelector('.panel-heading h2')).visibility,alpha:+getComputedStyle(document.querySelector('.panel-nav')).opacity,panel:rgb(document.getElementById('modulepanel')),row:rgb(el.closest('.panel-link')),rect:r.toJSON(),dpr:devicePixelRatio}})()");
    check(`${width}: native text is visible during the fade`,text.visibility==='visible'&&text.titleVisibility==='visible');
-   check(`${width}: native text actually has an intermediate fade`,text.alpha>.02&&text.alpha<.9);
+   check(`${width}: sampled native text has an intermediate fade`,text.alpha>.02&&text.alpha<.9);
    const image=await wc.capturePage(),png=image.toPNG(),pixels=image.toBitmap();
    const iw=png.readUInt32BE(16),ih=png.readUInt32BE(20);
    assert.equal(pixels.length,iw*ih*4,'Native bitmap pixel dimensions');
@@ -158,6 +346,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    fs.writeFileSync(path.join(app.getPath('userData'),`native-text-${width}.png`),png);
    log.info('PAINTED_TEXT '+JSON.stringify({width,ink,text,image:{width:iw,height:ih}}));
    check(`${width}: actual native screenshot contains partially revealed lettering`,ink>20);
+   await js("document.getAnimations().filter(a=>a.playState==='paused').forEach(a=>a.play())");
    await navigationSettled();
    check(`${width}: native lettering finishes fully legible`,await js("getComputedStyle(document.querySelector('.panel-nav')).opacity==='1'&&getComputedStyle(document.querySelector('.panel-link>span')).visibility==='visible'"));
   }

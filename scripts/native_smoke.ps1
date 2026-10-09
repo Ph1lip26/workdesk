@@ -1,4 +1,4 @@
-param([string]$Payload)
+param([string]$Payload,[ValidateSet('all','purchases','shell','performance')][string]$Scope='all')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $fixture=Join-Path $repo 'build\native-test'
@@ -6,11 +6,12 @@ $electron=Join-Path $repo 'node_modules\electron\dist\electron.exe'
 $python=if($Payload){Join-Path ([IO.Path]::GetFullPath($Payload)) 'resources\runtime\python.exe'}else{Join-Path $repo 'build\runtime\python.exe'}
 foreach($file in @($electron,$python)){if(-not (Test-Path -LiteralPath $file -PathType Leaf)){throw "Missing test runtime: $file"}}
 if(Get-CimInstance Win32_Process | Where-Object {$_.Name -eq 'electron.exe' -and $_.CommandLine -like ('*'+(Join-Path $repo 'scripts\native_smoke.cjs')+'*')}){throw 'The owned native test is already running; do not reset its fixture'}
-$names=@('WORKDESK_HOME','WORKDESK_PYTHON','WORKDESK_TEST_PAYLOAD','PYTHONDONTWRITEBYTECODE','PYTHONUTF8','PYTHONIOENCODING')
+$names=@('WORKDESK_HOME','WORKDESK_PYTHON','WORKDESK_TEST_PAYLOAD','WORKDESK_SMOKE_SCOPE','PYTHONDONTWRITEBYTECODE','PYTHONUTF8','PYTHONIOENCODING')
 $previous=@{};foreach($name in $names){$previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
 try{
  $env:WORKDESK_HOME=$fixture;$env:WORKDESK_PYTHON=$python
  $env:WORKDESK_TEST_PAYLOAD=if($Payload){[IO.Path]::GetFullPath($Payload)}else{$null}
+ $env:WORKDESK_SMOKE_SCOPE=$Scope
  $env:PYTHONDONTWRITEBYTECODE='1';$env:PYTHONUTF8='1';$env:PYTHONIOENCODING='utf-8'
  & $python (Join-Path $repo 'scripts\make_fixture.py')
  if($LASTEXITCODE){throw 'Synthetic fixture preparation failed'}

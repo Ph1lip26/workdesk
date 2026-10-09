@@ -1,0 +1,65 @@
+/* Day is neutral silver-grey metal with restrained luminance, never tinted white.
+   Night retains the original material system exactly. Layout/motion are shared. */
+html[data-appearance=day]{
+ color-scheme:light;--bg:#d2d2d2;--rail-bg:#bebebe;--panel-bg:#c8c8c8;
+ --surface:#e0e0e0;--control:#d8d8d8;--hover:#cecece;--text:#232323;
+ --muted:#3b3b3b;--ink-soft:#353535;--line:#969696;--accent:#303030;--blue:#303030;
+ --home-surface:#e0e0e0;--metal-fill:#e0e0e0;--metal-edge:#8d8d8d;
+ --metal-grain:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22256%22%20height%3D%22256%22%3E%3Cfilter%20id%3D%22g%22%20x%3D%220%22%20y%3D%220%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3CfeTurbulence%20type%3D%22fractalNoise%22%20baseFrequency%3D%22.014%20.85%22%20numOctaves%3D%222%22%20seed%3D%2219%22%20stitchTiles%3D%22stitch%22%2F%3E%3CfeColorMatrix%20type%3D%22saturate%22%20values%3D%220%22%2F%3E%3CfeComponentTransfer%3E%3CfeFuncA%20type%3D%22linear%22%20slope%3D%22.11%22%2F%3E%3C%2FfeComponentTransfer%3E%3C%2Ffilter%3E%3Crect%20width%3D%22100%25%22%20height%3D%22100%25%22%20filter%3D%22url%28%23g%29%22%2F%3E%3C%2Fsvg%3E");
+ --metal-finish:var(--metal-grain),linear-gradient(112deg,#00000012 0%,#ffffff06 29%,#ffffff55 49%,#ffffff14 63%,#00000010 88%,#00000007 100%),linear-gradient(180deg,#ffffff70 0%,#ffffff10 18%,transparent 38%,#0000000c 82%,#ffffff20 100%);
+ --metal-shadow:inset 0 1px 0 #ffffffe0,inset 1px 0 0 #ffffff80,inset 0 -1px 0 #00000035,0 7px 18px #00000018;
+ --scroll-thumb:#888888;--scroll-hover:#666666;--scroll-active:#484848;
+}
+html[data-appearance=day] :is(button,a,input,select,textarea,summary):focus-visible{outline-color:#353535}
+html[data-appearance=day] :is(input,textarea)::placeholder{color:#4f4f4f}
+html[data-appearance=day] .workspace-logo{filter:brightness(0)}
+html[data-appearance=day] :is(.workspace-name,.rail-button,.nav-caption,.panel-link,.nav-count,.panel-link svg,.tile-evidence,.tile-foot>span,.tile-record-top small,.schedule-date,.tile-handle){color:var(--muted)}
+html[data-appearance=day] .rail-button.active{color:var(--text);background-color:#cdcdcd;background-image:var(--metal-finish);border-color:#8d8d8d;box-shadow:var(--metal-shadow)}
+html[data-appearance=day] .rail-button.active::before{background:#303030}
+html[data-appearance=day] #navtoggle[aria-expanded=true]{color:var(--text);background:#00000007}
+html[data-appearance=day] .rail-panel-glyph rect{fill:#00000005}
+html[data-appearance=day] .module-rail{box-shadow:inset -1px 0 0 #00000009}
+html[data-appearance=day] .module-panel{border-right-color:#00000010;box-shadow:inset 1px 0 0 #ffffff50}
+html[data-appearance=day] .panel-link[aria-current=page]{background:#e0e0e0;border-color:#919191;color:var(--text);box-shadow:inset 0 1px 0 #ffffff90}
+html[data-appearance=day] .panel-link[aria-current=page] svg{color:var(--text)}
+html[data-appearance=day] :is(.quiet:hover:not(:disabled),.panel-link:hover:not(:disabled),.tile-handle:hover,.tile-handle:focus-visible,.tile-handle[aria-pressed=true]){background:#00000006;color:var(--text)}
+html[data-appearance=day] :is(.search-box,.controls select,.purchase-controls select,.refresh-button,.selectionbar){background:var(--control);border-color:#929292;box-shadow:inset 0 1px 0 #fff,0 4px 12px #00000006}
+html[data-appearance=day] .search-box:focus-within{background:#dcdcdc;border-color:#606060;box-shadow:0 0 0 3px #00000005}
+html[data-appearance=day] :is(.refresh-button:hover:not(:disabled),.pagination button:hover:not(:disabled)){background:var(--hover);border-color:#818181}
+html[data-appearance=day] .search-box svg{color:var(--muted)}
+html[data-appearance=day] button.primary{background:#303030;color:#fff;border-color:#303030}
+html[data-appearance=day] button.primary:hover:not(:disabled){background:#202020;border-color:#202020}
+html[data-appearance=day] :is(.card.done,.card:focus-within,.home-module-card:has(.module-entry:hover),.home-module-card:has(.module-entry:focus-visible),.purchase-card:hover,.purchase-card:focus-within){border-color:#626262}
+html[data-appearance=day] :is(.card.selected,.card.selected:focus-within){border-color:#303030}
+/* Covers remain untouched. Their badges keep an opaque contrasting backdrop. */
+html[data-appearance=day] .cover{background:#b8b8b8}
+html[data-appearance=day] input[type=checkbox]{background:#dedede;border-color:#686868}
+html[data-appearance=day] input[type=checkbox]:checked,html[data-appearance=day] input[type=checkbox]:indeterminate{background:#303030;border-color:#303030}
+html[data-appearance=day] input[type=checkbox]::after{background:#fff}
+html[data-appearance=day] .cover input{background:#dededeee}
+html[data-appearance=day] .cover input:checked{background:#303030}
+html[data-appearance=day] :is(.card-title:hover,.tile-record-top,.status-record strong,.home-source,.latest-note>strong,.tile-phase h3){color:var(--text)}
+html[data-appearance=day] :is(.tile-note,.tile-phase p,.status-record>span,.tile-record-summary,.collection-meta,.material-meta,.tile-record-top small,.latest-note>span,.collection-total span,.material-total span,.stage-line){color:var(--ink-soft)}
+html[data-appearance=day] :is(.tile-record:not(:last-child),.home-tile .tile-foot,.purchase-form-section,.purchase-editor-actions,.detail-source){border-color:#00000012}
+html[data-appearance=day] :is(.status-record:hover:not(:disabled),.tile-record:hover:not(:disabled),.home-source:hover:not(:disabled)){color:var(--text);background:transparent}
+html[data-appearance=day] :is(.card-menu summary,.card-menu summary:hover,.card-menu[open] summary){color:var(--muted)}
+html[data-appearance=day] :is(.card-menu summary:hover,.card-menu[open] summary,.card-menu>div a){background:#00000006}
+html[data-appearance=day] :is(dialog,.drawer){background:#dededef7;border-color:#888888;box-shadow:inset 0 1px 0 #fff,0 24px 80px #2020202b}
+html[data-appearance=day] .icon-close{background:var(--control);color:var(--text)}
+html[data-appearance=day] dialog::backdrop{background:#2020202b}
+html[data-appearance=day] :is(.muted,.queue-empty,.job-message,.detail-status,.detail-trigger,.detail-source>span,.detail-boundary,.purchase-field-note,.purchase-editor-actions>span){color:var(--muted)}
+html[data-appearance=day] :is(dialog textarea,dialog select,.purchase-editor input,.purchase-editor textarea,.purchase-editor select,.purchase-brief textarea){background:#dedede;border-color:#888888;color:var(--text)}
+html[data-appearance=day] :is(.purchase-status,.purchase-discard,.purchase-error,.notice,.purchase-empty){background:#00000003;border-color:#929292;color:var(--text)}
+html[data-appearance=day] .purchase-candidate{border-color:#929292}
+html[data-appearance=day] :is(.badge.done,.badge.pending,.badge.failed){background:#bfbfbf;border-color:#808080;color:#303030}
+html[data-appearance=day] :is(.job,.tool-section,.diagnostics,.queue-control){border-color:#00000012}
+html[data-appearance=day] :is(.pagination button,.page-numbers button){color:var(--text)}
+html[data-appearance=day] .page-numbers button[aria-current=page]{background:#303030;color:white;border-color:#303030}
+html[data-appearance=day] :is(.empty,.published-date){color:var(--muted)}
+html[data-appearance=day] .selectionbar{border-color:#888888;color:var(--text)}
+html[data-appearance=day] #toast{background:#303030;color:#fff;border-color:#303030}
+html[data-appearance=day] .window-chrome{background:var(--bg);color:var(--muted)}
+html[data-appearance=day] .home-card-moving{border-color:#505050}
+html[data-appearance=day] .home-drag-preview{border-color:#777777;box-shadow:0 22px 60px #0002}
+
+html[data-appearance=day] :is(.tile-evidence,.tile-foot>span,.collection-meta,.material-meta,.purchase-detail-meta){font-weight:600}

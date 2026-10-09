@@ -1,6 +1,7 @@
 const token=document.querySelector('meta[name=workbench-token]').content;
 const $=id=>document.getElementById(id);
-let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',toastTimer;
+let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',jobsFingerprint='',toastTimer;
+let syncPending=false,syncObserved=false,syncLocalStarted=0,syncPollBusy=false,syncStatus=null,syncTransportError='';
 const PAGE_SIZE=30;
 let pageNumber=1;
 // Same-origin, bounded raster branding. Light-ink centroid provides optical
@@ -50,6 +51,40 @@ function changePage(number){pageNumber=number;render();$('library').scrollIntoVi
 async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'X-Workbench-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});const out=await r.json();if(r.status===403){location.reload();throw Error('服务已更新，正在刷新页面')}if(!r.ok)throw Error(out.error||'请求未成功');return out}
 function toast(s){clearTimeout(toastTimer);const host=[...document.querySelectorAll('dialog[open]')].at(-1)||document.body;host.append($('toast'));$('toast').textContent=s;$('toast').style.display='block';toastTimer=setTimeout(()=>$('toast').style.display='none',4500)}
 async function action(name,data={}){try{const out=await api(name,data);fingerprint='';await refresh();return out}catch(e){toast(e.message);return null}}
+function syncFeedback(data,now=Date.now()){
+ const running=syncPending||Boolean(data?.syncing),p=data?.progress||{},r=data?.sync||{};
+ const elapsed=Math.max(0,Math.floor(now/1000-(p.started||syncLocalStarted/1000||now/1000)));
+ if(running)return {running,title:syncPending?'正在启动刷新…':p.phase==='saving'?'正在保存收藏并核对入库状态':p.message||'正在连接抖音收藏页',detail:`已用 ${elapsed} 秒 · 原有内容可继续浏览${elapsed>=30?' · 抖音响应较慢，仍在核对分页':''}`};
+ if(syncTransportError)return {running:false,title:'暂时无法读取刷新进度',detail:syncTransportError+'；未清空原有收藏'};
+ if(!r.updated)return null;
+ const stamp=new Date(r.updated*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),duration=Number.isFinite(r.duration)?` · 用时 ${Math.round(r.duration)} 秒`:'';
+ return {running:false,title:r.ok?(r.complete&&r.folders_complete?`刷新完成 · ${r.count||0} 条收藏`:'本次读取已结束 · 完整性待核验'):'刷新未成功 · 原有收藏已保留',detail:`上次刷新 ${stamp}${duration}${r.ok&&!r.folders_complete?' · 收藏夹仍需核验':''}`};
+}
+function paintSyncStatus(){
+ const data=syncStatus||{syncing:state?.syncing,progress:state?.sync_progress,sync:state?.sync},f=syncFeedback(data);
+ $('sync-status').hidden=!f;if(f){$('sync-stage').textContent=f.title;$('sync-elapsed').textContent=f.detail;$('sync-track').hidden=!f.running;$('sync-status').classList.toggle('running',f.running)}
+ const running=Boolean(f?.running);$('sync').disabled=running;$('sync').querySelector('span').textContent=running?'刷新中…':'刷新收藏';$('sync').setAttribute('aria-busy',String(running));document.body.classList.toggle('is-syncing',running);
+}
+async function pollSyncStatus(){
+ if(syncPollBusy)return;syncPollBusy=true;
+ try{const data=await api('sync_status');syncStatus=data;syncTransportError='';const finished=syncObserved&&!data.syncing&&!syncPending;syncObserved=syncObserved||data.syncing;paintSyncStatus();if(finished){syncObserved=false;fingerprint='';await refresh()}}
+ catch(e){syncTransportError=e.message;paintSyncStatus()}
+ finally{syncPollBusy=false}
+}
+async function startFavoritesRefresh(){
+ if(syncPending||syncStatus?.syncing||state?.syncing)return;
+ syncPending=true;syncLocalStarted=Date.now();syncStatus=null;syncTransportError='';paintSyncStatus();
+ try{await api('sync',{});syncObserved=true}
+ catch(e){syncTransportError=e.message;toast(e.message)}
+ finally{syncPending=false;await pollSyncStatus()}
+}
+async function refreshWithFeedback(id,task){
+ const button=$(id);if(!button||button.disabled)return;
+ const started=performance.now(),label=button.textContent;button.disabled=true;button.setAttribute('aria-busy','true');button.classList.add('is-loading');button.textContent='正在刷新…';
+ try{const ok=await task();if(ok!==false)toast(`内容已刷新 · 用时 ${((performance.now()-started)/1000).toFixed(1)} 秒`)}
+ catch(e){toast('刷新未完成，原有内容保留：'+e.message)}
+ finally{const current=$(id);if(current){current.disabled=false;current.removeAttribute('aria-busy');current.classList.remove('is-loading');current.textContent=label}}
+}
 function renderNavigation(){
  const choice=folder?'folder:'+folder:view;
  $('favoritecount').textContent=state.videos.filter(v=>v.favorite).length;
@@ -87,9 +122,8 @@ function render(){
  const done=scoped.filter(saved).length,names={all:'所有状态',new:'未入库',done:'已入库'},counts={all:scoped.length,new:scoped.length-done,done};
  for(const o of $('status').options)o.textContent=names[o.value]+' ('+counts[o.value]+')';
  $('scope').textContent=state.syncing?'正在后台刷新收藏…':allItems.length+' 个作品'+(pages>1?' · 第 '+((pageNumber-1)*PAGE_SIZE+1)+'–'+Math.min(pageNumber*PAGE_SIZE,allItems.length)+' 条':'')+($('sort').value==='published'?'，最近发布在前':'');
- $('sync').disabled=state.syncing;$('sync').querySelector('span').textContent=state.syncing?'刷新中':'刷新收藏';
- document.body.classList.toggle('is-syncing',Boolean(state.syncing));$('sync').setAttribute('aria-busy',String(Boolean(state.syncing)));
- $('notice').hidden=!(sync.updated&&sync.ok===false);
+ paintSyncStatus();
+ $('notice').hidden=Boolean(syncPending||state.syncing)||!(sync.updated&&sync.ok===false);
  const notice=syncNotice(sync,account,count);$('connection').textContent=notice.message;
  $('notice-login').hidden=!notice.needsLogin;$('notice-login').disabled=Boolean(state.syncing||state.authchecking);$('notice-detail').hidden=notice.needsLogin;
  $('account-status').textContent=state.authchecking?'正在后台检查登录…':account.message||'刷新和检查登录在后台进行，无需反复扫码。';
@@ -120,9 +154,12 @@ function render(){
  $('selectall').disabled=!candidates.length;$('selectall').checked=candidates.length>0&&selectedVisible===candidates.length;$('selectall').indeterminate=selectedVisible>0&&selectedVisible<candidates.length;
  $('selectionbar').hidden=document.body.dataset.module!=='douyin'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=!selection.size;
  $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>state.videos.find(v=>v.id===id)?.raw)?'生成知识笔记':'加入知识库';
+ const jobsKey=JSON.stringify([state.jobs,state.topics,state.jobs.map(j=>state.videos.find(v=>v.id===j.video)?.title)]);
+ if(jobsKey!==jobsFingerprint){
  $('jobs').innerHTML=state.jobs.length?state.jobs.map(j=>{const v=state.videos.find(v=>v.id===j.video),badge=['completed','skipped'].includes(j.status)?'done':j.status==='failed'?'failed':'pending';return '<div class="job"><span class="badge '+badge+'">'+(badge==='done'?check:'')+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(cleanTitle(v?.title||j.video))+'</p><p class="job-message">'+esc(j.message)+'</p>'+(j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+(j.status==='needs_review'?'<select data-topic="'+j.id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+state.topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+'<div class="job-actions">'+(j.note?'<a data-open-job="'+j.id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+(['failed','cancelled'].includes(j.status)?'<button data-retry="'+j.id+'">重试</button>':'')+(j.status==='needs_review'?'<button data-place="'+j.id+'">确认归类</button>':'')+(!['completed','skipped','cancelled'].includes(j.status)?'<button data-cancel="'+j.id+'">取消</button>':'')+'<button data-preview="'+j.id+'">查看草稿</button></div></div>'}).join(''):'<p class="queue-empty">没有待处理的视频。</p>';
+ jobsFingerprint=jobsKey;}
 }
-async function refresh(){if(busy)return;busy=true;try{state=await api('state');for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!eligible(v))selection.delete(id)}const next=JSON.stringify(state);if(next!==fingerprint&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。'}finally{busy=false}}
+async function refresh(){if(busy)return false;busy=true;try{state=await api('state');updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!eligible(v))selection.delete(id)}const {browser,sync_progress,...stable}=state;const next=JSON.stringify(stable);if(next!==fingerprint&&!navigationReflow&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false}}
 $('source').onchange=()=>selectSource($('source').value);
 $('modulepanel').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(button&&state)selectSource(button.dataset.source)});
 const compactNavigation=matchMedia('(max-width:1100px)');
@@ -132,10 +169,10 @@ let navigationAnimations=[];
 let navigationReflow=null,navigationGeneration=0;
 const railGlyphAnimations=new Map();
 function setRailGlyphState(expanded){
- const toggle=$('navtoggle'),module=$('douyinmodule');
+ const toggle=$('navtoggle'),module=$(document.body.dataset.module==='purchases'?'purchasemodule':'douyinmodule');
  const changed=module.getAttribute('aria-expanded')!==String(expanded);
  if(!changed){toggle.setAttribute('aria-expanded',String(expanded));return}
- const pieces=[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child'),toggle.querySelector('svg path:last-child')];
+ const pieces=module.id==='purchasemodule'?[toggle.querySelector('svg path:last-child')]:[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child'),toggle.querySelector('svg path:last-child')];
  // Read the visible mid-flight state before cancelling: rapid reversal never
  // snaps to the previous endpoint. Only transforms/opacity are animated.
  const before=pieces.map(el=>({transform:getComputedStyle(el).transform,opacity:getComputedStyle(el).opacity}));
@@ -206,9 +243,14 @@ function transitionNavigation(change){
   grid.style.position='relative';grid.style.display='block';grid.style.height=gridAfter.height+'px';
   navigationAnimations.push(grid.animate([{height:gridBefore.height+'px'},{height:gridAfter.height+'px'}],options));
   starts.forEach(({card,rect},i)=>{
-   card.style.position='absolute';card.style.margin='0';
-   const box=(r,g)=>({left:(r.left-g.left)+'px',top:(r.top-g.top)+'px',width:r.width+'px',height:r.height+'px'});
-   navigationAnimations.push(card.animate([box(rect,gridBefore),box(ends[i],gridAfter)],options));
+   const end=ends[i];
+   card.style.position='absolute';card.style.margin='0';card.style.left=(end.left-gridAfter.left)+'px';card.style.top=(end.top-gridAfter.top)+'px';
+   card.style.width=end.width+'px';card.style.height=end.height+'px';card.style.transformOrigin='0 0';card.style.contain='layout paint';card.style.willChange='transform';
+   const dx=(rect.left-gridBefore.left)-(end.left-gridAfter.left),dy=(rect.top-gridBefore.top)-(end.top-gridAfter.top);
+   // Fixed card layout; interpolate on the compositor, not thirty layouts per
+   // frame. Real old/end rectangles give monotonic size without a grid zoom.
+   const from=`translate(${dx}px,${dy}px) scale(${rect.width/end.width},${rect.height/end.height})`;
+   navigationAnimations.push(card.animate([{transform:from},{transform:'translate(0,0) scale(1,1)'}],options));
   });
  }
  // Preserve the first visible work when opening the panel far down the list.
@@ -238,17 +280,19 @@ function updateNavigationLayout(){
 }
 function updateNavigationToggle(){
  const home=document.body.dataset.module==='home';
- const expanded=!home&&(compactNavigation.matches?compactPanelOpen:!panelCollapsed);
+ const hasPanel=['douyin','purchases'].includes(document.body.dataset.module);
+ const expanded=hasPanel&&(compactNavigation.matches?compactPanelOpen:!panelCollapsed);
  // Commit the delay state before the glyph's computed-style reads flush layout.
  // Otherwise opening inherits the closing visibility delay: text fades while
  // hidden, then pops into view already almost opaque in native reduced motion.
  document.body.dataset.navigationExpanded=String(expanded);
- document.body.classList.toggle('nav-open',!home&&compactNavigation.matches&&compactPanelOpen);
- $('panelhost').hidden=home;$('navtoggle').hidden=home;
+ document.body.classList.toggle('nav-open',hasPanel&&compactNavigation.matches&&compactPanelOpen);
+ $('panelhost').hidden=!hasPanel;$('navtoggle').hidden=!hasPanel;
  $('modulepanel').inert=!expanded;
  $('modulepanel').setAttribute('aria-hidden',String(!expanded));
  setRailGlyphState(expanded);
  $('douyinmodule').setAttribute('aria-label',document.body.dataset.module==='douyin'?(expanded?'抖音收藏，收起导航':'抖音收藏，展开导航'):'打开抖音收藏');
+ $('purchasemodule').setAttribute('aria-label',document.body.dataset.module==='purchases'?(expanded?'购买决策夹，收起导航':'购买决策夹，展开导航'):'打开购买决策夹');
  $('homemodule').removeAttribute('aria-expanded');
  $('homemodule').setAttribute('aria-label',home?'首页，当前模块':'打开首页');
  $('navtoggle').setAttribute('aria-label',expanded?'收起导航':'展开导航');$('navtoggle').title=expanded?'收起导航':'展开导航';
@@ -259,7 +303,7 @@ function closeCompactNavigation(restoreFocus=false){
  transitionNavigation(()=>{compactPanelOpen=false;updateNavigationToggle()});
 }
 function toggleNavigation(){
- if(document.body.dataset.module==='home')return;
+ if(!['douyin','purchases'].includes(document.body.dataset.module))return;
  transitionNavigation(()=>{
  if(compactNavigation.matches)compactPanelOpen=!compactPanelOpen;
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
@@ -281,7 +325,7 @@ $('navigationmotion').onchange=async()=>{
 const resetPage=()=>{pageNumber=1;if(state)render()};
 $('search').oninput=resetPage;$('status').onchange=resetPage;$('sort').onchange=resetPage;
 $('prevpage').onclick=()=>changePage(pageNumber-1);$('nextpage').onclick=()=>changePage(pageNumber+1);
-$('sync').onclick=()=>action('sync');$('login').onclick=()=>action('login');$('openlogin').onclick=async()=>{const r=await action('open_login');if(r)toast('扫码完成后关闭窗口，刷新在后台进行')};$('refresh').onclick=async()=>{const r=await action('refresh');if(r)toast('入库状态已重新检查')};
+$('sync').onclick=startFavoritesRefresh;$('login').onclick=()=>action('login');$('openlogin').onclick=async()=>{const r=await action('open_login');if(r)toast('扫码完成后关闭窗口，刷新在后台进行')};$('refresh').onclick=()=>refreshWithFeedback('refresh',async()=>Boolean(await action('refresh')));
 $('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queueopen').onclick=()=>{closeCompactNavigation();$('queuepanel').showModal()};$('closequeue').onclick=()=>$('queuepanel').close();$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
 $('import').onclick=async()=>{const r=await action('import',{links:$('links').value});if(r){$('links').value='';view='local';folder='';pageNumber=1;render();$('tools').close();toast('已加入待选列表')}};
 $('clear').onclick=()=>{selection.clear();render()};
@@ -294,6 +338,7 @@ $('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toas
 // Only a complete pointer gesture on the actual outer backdrop dismisses a panel.
 // A nested preview closes on its own, leaving its parent queue open.
 for(const dialog of document.querySelectorAll('dialog')){
+ if(dialog.id==='purchaseeditor')continue; // Its own closer protects unsaved edits.
  let down=null;
  const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};
  dialog.addEventListener('pointerdown',e=>{down=outside(e)?e.pointerId:null});
@@ -301,3 +346,6 @@ for(const dialog of document.querySelectorAll('dialog')){
  dialog.addEventListener('pointercancel',()=>down=null);
 }
 alignWorkspaceBrand();refresh();setInterval(refresh,3500);
+
+setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing||state?.syncing||syncTransportError))pollSyncStatus()},900);
+setInterval(()=>{if(syncPending||syncStatus?.syncing)paintSyncStatus()},1000);

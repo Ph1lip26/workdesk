@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDIAN
 from home import Homepage
+from appearance import read_mode,save_mode
 TERMINAL={'completed','skipped','cancelled'}
 HOME_CARDS=('status','next','focus','douyin','later','materials')
 
@@ -255,6 +256,9 @@ class Service:
     def __init__(self,store=None,vault=VAULT,start_worker=True):
         self.vault=Path(vault);self.store=store or Store(ROOT/'data/state.sqlite3');self.bridge=BrowserBridge();self.stop=threading.Event();self.wake=threading.Event();self.sync_lock=threading.Lock();self.auth_lock=threading.Lock();self.write_lock=threading.Lock()
         self.home=Homepage(self.vault,ROOT)
+        self.sync_started=0;self.sync_phase=''
+        from purchases import Purchases
+        self.purchases=Purchases(self.store,self.vault)
         self.import_local();self.refresh_notes()
         if start_worker:threading.Thread(target=self.worker,daemon=True).start()
     def import_local(self):
@@ -274,9 +278,11 @@ class Service:
         return len(records)
     def sync(self):
         if not self.sync_lock.acquire(False):raise ValueError('收藏同步已在进行')
+        self.sync_started=time.time();self.sync_phase='connecting'
         def run():
             try:
                 result=self.bridge.request('sync',timeout=600)
+                self.sync_phase='saving'
                 self.store.apply_sync(result)
                 if result.get('ok'):self.refresh_notes()
                 safe={k:result.get(k) for k in ('ok','complete','folders_complete','message','response_count','pagination','folder_pages')};safe['count']=len(result.get('favorite_order',result.get('videos',[])));safe['updated']=time.time()
@@ -287,8 +293,11 @@ class Service:
                     safe=self.failed_sync(result.get('message','后台刷新未成功'),result.get('error_code'))
                     if safe['error_code']=='login_required':
                         self.store.set_setting('account',json.dumps(dict(logged_in=False,needs_login=True,error_code='login_required',message='抖音尚未登录，请扫码登录后刷新',updated=time.time()),ensure_ascii=False))
+                safe['duration']=round(time.time()-self.sync_started,1)
                 self.store.set_setting('sync_result',json.dumps(safe,ensure_ascii=False))
-            except Exception as e:self.store.set_setting('sync_result',json.dumps(self.failed_sync(str(e)),ensure_ascii=False))
+            except Exception as e:
+                safe=self.failed_sync(str(e));safe['duration']=round(time.time()-self.sync_started,1)
+                self.store.set_setting('sync_result',json.dumps(safe,ensure_ascii=False))
             finally:self.sync_lock.release()
         threading.Thread(target=run,daemon=True).start()
     def failed_sync(self,message,error_code=None):
@@ -313,8 +322,16 @@ class Service:
         for j in jobs:j['result']='' # Full evidence available only in explicit preview endpoint.
         return dict(videos=videos,jobs=jobs,folders=self.store.rows('SELECT * FROM folders ORDER BY name'),membership=self.store.rows('SELECT * FROM membership'),
                     browser=read_json(PRIVATE/'browser-state.json',dict(status='closed')),sync=json.loads(self.store.setting('sync_result','{}')),
-                    syncing=self.sync_lock.locked(),authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
-                     paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
+                    syncing=self.sync_lock.locked(),sync_progress=self.sync_status()['progress'],authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
+                      appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
+    def sync_status(self):
+        started=getattr(self,'sync_started',0);running=self.sync_lock.locked()
+        browser=read_json(PRIVATE/'browser-state.json',{})
+        progress=dict(started=started,elapsed=round(max(0,time.time()-started),1) if started and running else 0,phase=getattr(self,'sync_phase','connecting'))
+        # Ignore stale worker messages from an earlier run, never expose proof IDs.
+        if running and browser.get('status')=='syncing' and browser.get('updated',0)>=started and self.sync_phase!='saving':
+            progress.update({k:browser[k] for k in ('phase','message','count','folder_count','folder_done') if k in browser})
+        return dict(syncing=running,progress=progress,sync=json.loads(self.store.setting('sync_result','{}')))
     def card_order(self):
         try:return home_order(json.loads(self.store.setting('home_card_order','[]')),legacy=True)
         except (ValueError,TypeError):return list(HOME_CARDS)
@@ -598,14 +615,34 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
                 self.update_job(j['id'],status='failed',message=str(e)[:400])
                 if self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage']=='gpt':self.store.set_setting('paused','1')
     def action(self,name,payload):
+        if name=='appearance':return save_mode(ROOT,payload.get('mode'))
+        if name=='open_refresh':
+            # Refresh only derived local data. Never rewrite personal plans,
+            # reset a queue, change its pause state or restart a busy browser.
+            count=None
+            if self.write_lock.acquire(False):
+                try:
+                    self.import_local()
+                    count=self.refresh_notes()
+                finally:self.write_lock.release()
+            remote='disabled'
+            if CONFIG.get('refresh_favorites_on_open',True):
+                if self.sync_lock.locked() or self.auth_lock.locked():remote='busy'
+                else:
+                    try:self.sync();remote='started'
+                    except ValueError:remote='busy' # Another sync won the race.
+            return dict(ok=True,local_notes=count,remote=remote)
+        if name=='purchase_save':return self.purchases.save(payload)
         if name=='home_layout':
             order=home_order(payload.get('order'))
             self.store.set_setting('home_card_order',json.dumps(order))
             return dict(ok=True,order=order)
-        if name in ('open_note','open_home_note'):
+        if name in ('open_note','open_home_note','open_purchase_note'):
             # Resolve only an existing workbench record, never a caller-supplied file path.
             if name=='open_home_note':
                 note=self.home.reference(str(payload.get('source','')))
+            elif name=='open_purchase_note':
+                note=self.purchases.reference(str(payload.get('id','')))
             elif payload.get('job'):
                 rows=self.store.rows('SELECT note FROM jobs WHERE id=?',(str(payload['job']),))
                 note=rows[0]['note'] if rows else ''
@@ -617,7 +654,7 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             path=(self.vault/note).resolve()
             try:rel=path.relative_to(self.vault.resolve())
             except ValueError:raise ValueError('笔记路径不在当前知识库内')
-            allowed=('处理文件','输出文件') if name=='open_home_note' else ('处理文件','原始资料')
+            allowed=('处理文件','输出文件') if name in ('open_home_note','open_purchase_note') else ('处理文件','原始资料')
             if rel.parts[0] not in allowed or path.suffix!='.md' or not path.is_file():
                 raise ValueError('笔记不存在或不是可打开的入库笔记；请重新检查入库状态')
             logfile=ROOT/'data/open-note.log'

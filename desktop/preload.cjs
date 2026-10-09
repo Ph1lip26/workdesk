@@ -10,5 +10,8 @@ window.addEventListener('DOMContentLoaded',()=>{
 contextBridge.exposeInMainWorld('workdesk', {
   getSettings:()=>ipcRenderer.invoke('settings:get'),
   choosePath:kind=>ipcRenderer.invoke('settings:choose',kind),
-  saveSettings:value=>ipcRenderer.invoke('settings:save',value)
+  saveSettings:value=>ipcRenderer.invoke('settings:save',value),
+  getAppearance:()=>ipcRenderer.invoke('appearance:get'),
+  applyAppearance:mode=>ipcRenderer.invoke('appearance:apply',mode),
+  onOpened:callback=>{if(typeof callback!=='function')return;const listener=()=>callback();ipcRenderer.on('workdesk:opened',listener);return ()=>ipcRenderer.removeListener('workdesk:opened',listener)}
 });

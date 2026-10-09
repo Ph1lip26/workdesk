@@ -3,7 +3,7 @@ import argparse,hashlib,json,re,subprocess,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 SKIP={'node_modules','build','.git','__pycache__','.playwright-cli'}
-BLOCKED={'config.json','homepage.json','appsettings.json','auth.json','snapshot.json','state.sqlite3','.env'}
+BLOCKED={'config.json','homepage.json','appearance.json','appsettings.json','auth.json','snapshot.json','state.sqlite3','.env'}
 RULES={
  'absolute_windows_path':re.compile(r'(?<![\w])(?:[A-Z]:\\|[A-Z]:/)[^\n\r\"\']+',re.I),
  'absolute_home_path':re.compile(r'/(?:Users|home)/[^\s/]+/'),
@@ -54,7 +54,7 @@ def main():
     if a.payload:
         # Runtime distributions are upstream binaries, not user profiles. Only
         # check our own backend/desktop/config area plus forbidden runtime names.
-        forbidden={'auth.json','config.json','homepage.json','cookies.json','state.sqlite3','snapshot.json'}
+        forbidden={'auth.json','config.json','homepage.json','appearance.json','cookies.json','state.sqlite3','snapshot.json'}
         for f in a.payload.rglob('*'):
             if f.is_file() and f.name.lower() in forbidden:problems.append((f.name,'private_payload_file'))
             if f.is_file() and (f.suffix=='.pyc' or '.links' in f.parts):problems.append((f.name,'local_path_payload'))

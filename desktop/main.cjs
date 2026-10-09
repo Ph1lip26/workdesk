@@ -1,10 +1,12 @@
-const {app,BrowserWindow,Tray,Menu,dialog,ipcMain,shell,nativeImage} = require('electron');
+const {app,BrowserWindow,Tray,Menu,dialog,ipcMain,shell,nativeImage,nativeTheme} = require('electron');
 const fs=require('node:fs'),path=require('node:path'),net=require('node:net'),crypto=require('node:crypto');
 const {spawn}=require('node:child_process');
 const {trusted,safeExternal,loadConfig,saveConfig,request}=require('./platform.cjs');
 const {brandFile}=require('./branding.cjs');
+const appearance=require('./appearance.cjs');
 if(process.env.WORKDESK_HOME)app.setPath('userData',path.resolve(process.env.WORKDESK_HOME));
 const home=app.getPath('userData');
+let appearancePreference=appearance.read(home);
 const setupURL=require('node:url').pathToFileURL(path.join(__dirname,'setup.html')).href;
 let window,tray,origin='',backend=null,quitting=false,startup;
 const locked=app.requestSingleInstanceLock();
@@ -16,7 +18,8 @@ else {
   // Closing is not exit; tasks remain in the independent local service.
   app.on('window-all-closed',()=>{});
 }
-function show(){if(window){window.show();if(window.isMinimized())window.restore();window.focus()}}
+function announceOpen(){if(window&&!window.webContents.isDestroyed())window.webContents.send('workdesk:opened')}
+function show(){if(window){window.show();if(window.isMinimized())window.restore();window.focus();announceOpen()}}
 function bundle(){return app.isPackaged?path.join(process.resourcesPath,'backend'):path.join(__dirname,'../backend')}
 function runtime(){return app.isPackaged?path.join(process.resourcesPath,'runtime'):path.join(__dirname,'../build/runtime')}
 function python(){return process.env.WORKDESK_PYTHON || path.join(runtime(),process.platform==='win32'?'python.exe':'bin/python3')}
@@ -25,10 +28,19 @@ async function create(){
   const defaultIcon=path.join(__dirname,'../assets/icon.png');
   let icon=nativeImage.createFromPath(brandFile(home,defaultIcon));
   if(icon.isEmpty())icon=nativeImage.createFromPath(defaultIcon);
-  window=new BrowserWindow({width:1440,height:920,minWidth:800,minHeight:560,title:'Workdesk · 个人工作台',backgroundColor:'#131415',
-    titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:{color:'#131415',symbolColor:'#d0d3d7',height:40}}:{}),
+  const colors=appearance.palette(appearance.resolve(appearancePreference,nativeTheme.shouldUseDarkColors));
+  window=new BrowserWindow({width:1180,height:760,minWidth:800,minHeight:560,title:'Workdesk · 个人工作台',backgroundColor:colors.color,
+    titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:colors}:{}),
     icon,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,devTools:false}});
   window.on('close',e=>{if(!quitting){e.preventDefault();window.hide()}});
+  window.on('show',announceOpen);window.on('restore',announceOpen);
+  const paintWindow=mode=>{
+    if(!window||window.isDestroyed())return;
+    const colors=appearance.palette(appearance.resolve(mode,nativeTheme.shouldUseDarkColors));
+    window.setBackgroundColor(colors.color);
+    if(process.platform!=='darwin')window.setTitleBarOverlay(colors);
+  };
+  nativeTheme.on('updated',()=>{if(appearancePreference==='system')paintWindow(appearancePreference)});
   window.webContents.session.setPermissionRequestHandler((_wc,_permission,cb)=>cb(false));
   window.webContents.session.setPermissionCheckHandler(()=>false);
   window.webContents.session.on('will-download',e=>e.preventDefault());
@@ -39,6 +51,13 @@ async function create(){
     {label:'设置',click:async()=>{show();if(await idle())await window.loadURL(setupURL);else dialog.showMessageBox(window,{message:'有任务或后台操作，完成后再修改设置。'})}},
     {type:'separator'},{label:'彻底退出（不打断任务）',click:quit}]));
   Menu.setApplicationMenu(null);
+  const authorizeAppearance=e=>{if(e.sender!==window.webContents||(e.senderFrame?.url!==setupURL&&!(origin&&trusted(e.senderFrame?.url,origin))))throw Error('只允许本机工作台修改外观')};
+  ipcMain.handle('appearance:get',e=>{authorizeAppearance(e);return appearance.read(home)});
+  ipcMain.handle('appearance:apply',(e,mode)=>{
+    authorizeAppearance(e);if(!appearance.valid(mode))throw Error('无效的外观模式');
+    appearancePreference=mode;paintWindow(mode);
+    return {ok:true};
+  });
   ipcMain.handle('settings:get',(e)=>{authorizeSetup(e);return loadConfig(home)});
   ipcMain.handle('settings:choose',async(e,kind)=>{
     authorizeSetup(e);if(!['vault_path','codex_path','obsidian_path','media_path'].includes(kind))throw Error('不支持的路径类型');
