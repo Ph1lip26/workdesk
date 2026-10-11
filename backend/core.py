@@ -6,16 +6,19 @@ from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDI
 from home import Homepage
 from appearance import read_mode,save_mode
 TERMINAL={'completed','skipped','cancelled'}
-HOME_CARDS=('status','next','focus','douyin','later','materials')
+HOME_CARDS=('status','next','douyin','materials','purchases','health')
+LEGACY_HOME_CARDS=('status','next','focus','douyin','later','materials','purchases','health')
 
 def home_order(value,legacy=False):
-    if legacy and isinstance(value,list) and len(value)==5 and all(isinstance(x,str) for x in value) and set(value)==set(HOME_CARDS[:-1]):
-        # Read-time migration only: preserve the user's five-card arrangement,
-        # append the new entry without rewriting saved settings on startup.
-        return [*value,'materials']
-    if not isinstance(value,list) or len(value)!=len(HOME_CARDS) or any(not isinstance(x,str) for x in value) or set(value)!=set(HOME_CARDS):
+    if not isinstance(value,list) or any(not isinstance(x,str) for x in value):
         raise ValueError('首页布局必须包含全部卡片，且不能重复或加入未知卡片')
-    return value
+    if len(value)==len(HOME_CARDS) and set(value)==set(HOME_CARDS):
+        return value
+    if legacy and len(value) in (5,6,8) and set(value)==set(LEGACY_HOME_CARDS[:len(value)]):
+        # Display migration only; do not rewrite a user's saved layout.
+        kept=[x for x in value if x in HOME_CARDS]
+        return kept+[x for x in HOME_CARDS if x not in kept]
+    raise ValueError('首页布局必须包含全部卡片，且不能重复或加入未知卡片')
 
 def today(): return datetime.date.today().isoformat()
 def read_json(p, default=None):
@@ -259,6 +262,8 @@ class Service:
         self.sync_started=0;self.sync_phase=''
         from purchases import Purchases
         self.purchases=Purchases(self.store,self.vault)
+        from health import Health
+        self.health=Health(self.store)
         self.import_local();self.refresh_notes()
         if start_worker:threading.Thread(target=self.worker,daemon=True).start()
     def import_local(self):
@@ -617,21 +622,10 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
     def action(self,name,payload):
         if name=='appearance':return save_mode(ROOT,payload.get('mode'))
         if name=='open_refresh':
-            # Refresh only derived local data. Never rewrite personal plans,
-            # reset a queue, change its pause state or restart a busy browser.
-            count=None
-            if self.write_lock.acquire(False):
-                try:
-                    self.import_local()
-                    count=self.refresh_notes()
-                finally:self.write_lock.release()
-            remote='disabled'
-            if CONFIG.get('refresh_favorites_on_open',True):
-                if self.sync_lock.locked() or self.auth_lock.locked():remote='busy'
-                else:
-                    try:self.sync();remote='started'
-                    except ValueError:remote='busy' # Another sync won the race.
-            return dict(ok=True,local_notes=count,remote=remote)
+            # Compatibility with older renderers: never scan or start a browser.
+            return dict(ok=True,local_notes=None,remote='disabled')
+        if name=='health_save':return self.health.save(payload)
+        if name=='health_delete':return self.health.delete(payload)
         if name=='purchase_save':return self.purchases.save(payload)
         if name=='home_layout':
             order=home_order(payload.get('order'))

@@ -1,10 +1,10 @@
 /* Taste read: quiet personal status tiles, not a report or a KPI wall.
    Homepage content is read-only. Reordering persists only generic tile IDs. */
-const moduleRegistry={home:{title:'首页',view:'homeview',nav:null,button:'homemodule'},douyin:{title:'抖音收藏',view:'douyinview',nav:'douyinnav',button:'douyinmodule'},purchases:{title:'购买决策夹',view:'purchaseview',nav:'purchasenav',button:'purchasemodule'}};
-const HOME_CARD_IDS=['status','next','focus','douyin','later','materials'];
+const moduleRegistry={home:{title:'首页',view:'homeview',nav:null,button:'homemodule'},douyin:{title:'抖音收藏',view:'douyinview',nav:'douyinnav',button:'douyinmodule'},purchases:{title:'购买决策夹',view:'purchaseview',nav:'purchasenav',button:'purchasemodule'},health:{title:'个人健康',view:'healthview',nav:'healthnav',button:'healthmodule'}};
+const HOME_CARD_IDS=['status','next','douyin','materials','purchases','health'];
 let currentModule='home',homeState=null,homeFingerprint='',homeBusy=false,homeDetail=null;
 let homeOrder=[...HOME_CARD_IDS],homeSavedOrder=[...HOME_CARD_IDS],homePendingSaves=0,homeSaveChain=Promise.resolve(),homeDrag=null,homeDeferredRender=false;
-const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0,purchases:0};
+const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0,purchases:0,health:0};
 const homeArrow=document.querySelector('#enqueue svg').outerHTML,homeRefresh=document.querySelector('#sync svg').outerHTML;
 const homeGrip='<svg data-lucide="grip-vertical" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></svg>';
 const sourceMeta=id=>homeState?.sources.find(s=>s.id===id);
@@ -13,9 +13,10 @@ const sourceButton=(id,label='打开资料')=>'<button class="home-source quiet"
 const validHomeOrder=order=>Array.isArray(order)&&order.length===HOME_CARD_IDS.length&&order.every(x=>HOME_CARD_IDS.includes(x))&&new Set(order).size===order.length;
 function selectModule(name,{animate=true}={}){
  if(!moduleRegistry[name])return;
+ if(typeof closeWeightTooltip==='function')closeWeightTooltip();
  finishHomeDrag(true);homeLandingGhosts.forEach(g=>g.remove());homeLandingGhosts.clear();
  const ws=document.querySelector('.workspace');moduleScroll[currentModule]=ws.scrollTop;
- stopNavigationAnimation();if(name==='purchases'&&compactNavigation.matches)compactPanelOpen=true;
+ stopNavigationAnimation();if(['purchases','health'].includes(name)&&compactNavigation.matches)compactPanelOpen=true;
  currentModule=name;document.body.dataset.module=name;
  for(const [key,m] of Object.entries(moduleRegistry)){
   $(m.view).hidden=key!==name;if(m.nav)$(m.nav).hidden=key!==name;
@@ -24,18 +25,21 @@ function selectModule(name,{animate=true}={}){
  }
  $('paneltitle').textContent=moduleRegistry[name].title;
  $('modulepanel').setAttribute('aria-label',moduleRegistry[name].title+'导航');
- $('selectionbar').hidden=name!=='douyin'||!selection.size;
- document.querySelector('.skip-link').href=name==='home'?'#homeview':name==='purchases'?'#purchaseview':'#library';
- document.querySelector('.skip-link').textContent=name==='home'?'跳到首页内容':name==='purchases'?'跳到购买决策夹':'跳到作品列表';
- document.title='Workdesk · '+moduleRegistry[name].title;history.replaceState(null,'','#'+name);
+ $('selectionbar').hidden=name!=='douyin'||douyinPage==='queue'||!selection.size;
+ document.querySelector('.skip-link').href=name==='home'?'#homeview':name==='health'?'#healthview':name==='purchases'?'#purchaseview':douyinPage==='queue'?'#queuepanel':'#library';
+ document.querySelector('.skip-link').textContent=name==='home'?'跳到首页内容':name==='health'?'跳到健康记录':name==='purchases'?'跳到购买决策夹':'跳到作品列表';
+ document.title='Workdesk · '+(name==='douyin'&&douyinPage==='queue'?'处理队列':moduleRegistry[name].title);history.replaceState(null,'','#'+(name==='douyin'&&douyinPage==='queue'?'queue':name));
  updateNavigationToggle();ws.scrollTop=moduleScroll[name];
  if(name==='home'){refreshHomepage();renderHomepageSummary()}
  if(name==='purchases'&&typeof refreshPurchases==='function')refreshPurchases();
- if(animate&&navigationMotionEnabled())$(moduleRegistry[name].view).animate([{opacity:.4,transform:'translateY(6px)'},{opacity:1,transform:'translateY(0)'}],{duration:240,easing:'cubic-bezier(.22,1,.36,1)'});
+ if(name==='health'&&typeof refreshHealth==='function')refreshHealth();
+ if(animate)animateModuleGlyph(name);
+ if(animate&&navigationMotionEnabled())$(moduleRegistry[name].view).animate([{transform:'translateY(3px)'},{transform:'translateY(0)'}],{duration:280,easing:'cubic-bezier(.22,1,.36,1)'});
 }
 function homeTile(id,title,body,footer='',wide=false){
- const moduleCard=id==='douyin'||id==='materials';
- return '<article class="home-tile '+(wide?'home-tile-wide':'')+(moduleCard?' home-module-card':'')+'" data-home-card="'+id+'" role="listitem" aria-label="'+esc(title)+'"'+(moduleCard?' data-module-route="douyin"':'')+'><div class="tile-heading"><h2>'+esc(title)+'</h2><button class="tile-handle" data-home-handle="'+id+'" aria-label="调整'+esc(title)+'的位置" aria-describedby="home-drag-help" aria-pressed="false" title="拖动换位置；空格开始，方向键移动，回车确认">'+homeGrip+'</button></div><div class="tile-body">'+body+'</div>'+(footer?'<div class="tile-foot">'+footer+'</div>':'')+'</article>';
+ const moduleCard=['douyin','materials','health','purchases'].includes(id);
+ const route=id==='materials'?'douyin':id;
+ return '<article class="home-tile '+(wide?'home-tile-wide':'')+(moduleCard?' home-module-card':'')+'" data-home-card="'+id+'" role="listitem" aria-label="'+esc(title)+'"'+(moduleCard?' data-module-route="'+route+'"':'')+'><div class="tile-heading"><h2>'+esc(title)+'</h2><button class="tile-handle" data-home-handle="'+id+'" aria-label="调整'+esc(title)+'的位置" aria-describedby="home-drag-help" aria-pressed="false" title="拖动换位置；空格开始，方向键移动，回车确认">'+homeGrip+'</button></div><div class="tile-body" tabindex="0" role="region" aria-label="'+esc(title)+'，完整内容">'+body+'</div>'+(footer?'<div class="tile-foot">'+footer+'</div>':'')+'</article>';
 }
 function homeRows(entries,kind,{compact=false}={}){
  return entries.map(item=>'<button class="tile-record '+(compact?'tile-record-compact':'')+'" data-home-detail="'+esc(kind+':'+item.id)+'"><span class="tile-record-top"><span>'+esc(item.title)+'</span><small>'+esc(item.status||'记录')+'</small></span>'+(compact?'':'<span class="tile-record-summary">'+esc(item.summary)+'</span>')+homeArrow+'</button>').join('');
@@ -46,12 +50,14 @@ function renderHomepage(){
  const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="重新读取首页">'+homeRefresh+'</button></div></header>';
  const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin" data-go-source="favorites">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
  const materialsTile=()=>homeTile('materials','本地素材','<div id="home-material-summary"><p class="tile-note">正在读取素材记录…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-source="local">查看全部素材'+homeArrow+'</a><span>内容记录</span>');
+ const healthTile=()=>homeTile('health','个人健康','<div id="home-health-summary"><p class="tile-note">尚未记录体重</p></div>','<a class="home-source quiet module-entry" href="#health" data-go-module="health">查看体重'+homeArrow+'</a>');
+ const purchaseTile=()=>homeTile('purchases','购买决策夹','<div id="home-purchases-summary"><p class="tile-note">正在读取记录…</p></div>','<a class="home-source quiet module-entry" href="#purchases" data-go-module="purchases">查看决策'+homeArrow+'</a>');
  const purchaseEntry='<a id="home-purchase-entry" class="home-source quiet" href="#purchases" data-go-module="purchases">购买决策夹'+homeArrow+'</a>';
  if(!data.configured){
-  $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p>'+purchaseEntry+'<div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+materialsTile()+'</div>';
+  $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p>'+purchaseEntry+'<div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+materialsTile()+purchaseTile()+healthTile()+'</div>';
   renderHomepageSummary();applyHomeOrder(homeOrder);return;
  }
- const overview=data.overview||[],upcoming=data.schedule.slice(0,2);
+ const overview=data.overview||[],upcoming=data.schedule;
  const attention=[...data.waiting.filter(x=>!x.deferred).map(x=>({...x,kind:'waiting'})),...data.projects.filter(x=>x.attention).map(x=>({...x,kind:'projects'}))];
  const later=[...data.projects.filter(x=>x.deferred).map(x=>({...x,kind:'projects'})),...data.waiting.filter(x=>x.deferred).map(x=>({...x,kind:'waiting'}))];
  const phase='<div class="tile-phase"><h3>'+esc(data.stage.title||'当前阶段')+'</h3><p>'+esc(data.stage.subtitle)+'</p></div>';
@@ -64,16 +70,16 @@ function renderHomepage(){
  const tiles=[
   homeTile('status','当前状态',statusBody,'<span class="stage-line">'+esc(route)+'</span>'+sourceButton(data.stage.source,'查看状态')),
   homeTile('next','近期安排',nextBody,more('next',data.schedule.length,'查看安排')+'<span>已有记录</span>'),
-  homeTile('focus','需要留意',focusBody,'<span>未确认</span>'+more('focus',attention.length,'查看详情')),
   moduleTile(),
-  homeTile('later','稍后计划',laterBody,purchaseEntry+more('later',later.length,'查看详情')),
-  materialsTile()
+  materialsTile(),purchaseTile(),healthTile()
  ];
  $('homeview').innerHTML=head+'<p id="home-drag-help" class="sr-only">拖动右上角换位置。键盘空格或回车拿起，方向键移动，回车放下，Escape取消。</p><div id="home-cards" class="home-card-grid" role="list" aria-label="个人状态卡片">'+tiles.join('')+'</div><p id="home-layout-status" class="sr-only" role="status" aria-live="polite"></p>';
  syncHomeOrder();renderHomepageSummary();applyHomeOrder(homeOrder);
 }
 function renderHomepageSummary(){
  if(typeof renderPurchaseHome==='function')renderPurchaseHome();
+ if(typeof renderHealthHome==='function')renderHealthHome();
+ const pt=$('home-purchases-summary');if(pt){const records=typeof purchaseState!=='undefined'?purchaseState?.records:[];const n=records?.filter(r=>!['decided','shelved'].includes(r.status)).length;pt.innerHTML='<div class="collection-total"><strong>'+(n??'—')+'</strong><span>项待决定</span></div><p class="tile-note">'+esc(records?.[0]?.title||'保存需求与上次结论')+'</p>'}
  if(homeDrag)return;
  const target=$('home-module-summary');if(!target)return;if(!state){for(const el of [target,$('home-material-summary')])if(el){el.innerHTML='<p class="tile-note">数据尚未连接，不显示推测数值。</p>';delete el.dataset.content}return}
  const favorites=state.videos.filter(v=>v.favorite),done=favorites.filter(saved).length;
@@ -212,19 +218,24 @@ document.addEventListener('keydown',e=>{
 window.addEventListener('blur',()=>finishHomeDrag(true));window.addEventListener('resize',()=>{finishHomeDrag(true);applyHomeOrder(homeOrder)});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)finishHomeDrag(true)});
 document.addEventListener('click',async e=>{
- const b=e.target.closest('button,a');if(!b)return;
+ const b=e.target.closest('button,a');if(!b){
+  const card=e.target.closest('.home-module-card');if(card&&e.target.closest('.tile-body')&&!window.getSelection()?.toString()){selectModule(card.dataset.moduleRoute);if(card.dataset.homeCard==='materials')selectSource('local');else if(card.dataset.homeCard==='douyin')selectSource('favorites')}
+  return;
+ }
  if(b.dataset.goSource){e.preventDefault();selectModule('douyin');selectSource(b.dataset.goSource);document.querySelector('.workspace').scrollTop=0;return}
  if(b.dataset.goModule){e.preventDefault();selectModule(b.dataset.goModule);return}
- if(b.hasAttribute('data-home-queue')){selectModule('douyin');$('queuepanel').showModal();return}
+ if(b.hasAttribute('data-home-queue')){e.preventDefault();openQueuePage();return}
  if(b.dataset.homeDetail){const [kind,...id]=b.dataset.homeDetail.split(':');showHomeDetail(kind,id.join(':'));return}
  if(b.dataset.homeList){showHomeList(b.dataset.homeList);return}
  if(b.dataset.homeSource){b.disabled=true;try{await api('open_home_note',{source:b.dataset.homeSource})}catch(err){toast(err.message)}finally{b.disabled=false}return}
  if(b.id==='home-reset'){finishHomeDrag(true);applyHomeOrder(HOME_CARD_IDS,true);await persistHomeOrder();return}
- if(b.id==='home-refresh')await refreshWithFeedback('home-refresh',async()=>{const libraryOK=await refresh(),homeOK=await refreshHomepage();return libraryOK!==false&&homeOK!==false})
+ if(b.id==='home-refresh')await refreshWithFeedback('home-refresh',async()=>{const libraryOK=await refresh(),homeOK=await refreshHomepage(),healthOK=await refreshHealth();return libraryOK!==false&&homeOK!==false&&healthOK!==false})
 });
 $('homemodule').onclick=()=>{if(currentModule!=='home')selectModule('home')};
 $('douyinmodule').onclick=()=>currentModule==='douyin'?toggleNavigation():selectModule('douyin');
 $('closehomedetail').onclick=()=>$('homedetail').close();
-window.addEventListener('hashchange',()=>{const name=location.hash.slice(1);if(name in moduleRegistry&&name!==currentModule)selectModule(name)});
-selectModule(location.hash==='#library'?'douyin':moduleRegistry[location.hash.slice(1)]?location.hash.slice(1):'home',{animate:false});
+window.addEventListener('hashchange',()=>{const name=location.hash.slice(1);if(name==='queue'){openQueuePage();return}if(name in moduleRegistry){if(name!==currentModule)selectModule(name);if(name==='douyin')selectDouyinPage('library',{focus:false})}});
+const initialQueueRoute=location.hash==='#queue';
+selectModule(location.hash==='#library'||initialQueueRoute?'douyin':moduleRegistry[location.hash.slice(1)]?location.hash.slice(1):'home',{animate:false});
+if(initialQueueRoute)selectDouyinPage('queue',{focus:false});
 setInterval(()=>{if(currentModule==='home')refreshHomepage()},15000);

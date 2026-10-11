@@ -76,7 +76,7 @@ function renderPurchaseHome(){
 }
 async function refreshPurchases(){
  if(purchaseBusy)return false;purchaseBusy=true;
- try{purchaseState=await api('purchases');$('purchase-error').hidden=true;renderPurchases();renderPurchaseHome();return true}
+ try{purchaseState=await api('purchases');$('purchase-error').hidden=true;renderPurchases();renderHomepageSummary();return true}
  catch(e){$('purchase-error').textContent='购买记录读取失败：'+e.message+'。已有数据未删除。';$('purchase-error').hidden=false;return false}
  finally{purchaseBusy=false}
 }

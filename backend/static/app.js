@@ -1,6 +1,7 @@
 const token=document.querySelector('meta[name=workbench-token]').content;
 const $=id=>document.getElementById(id);
 let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',jobsFingerprint='',toastTimer;
+let douyinPage='library',libraryScroll=0,queueScroll=0;
 let syncPending=false,syncObserved=false,syncLocalStarted=0,syncPollBusy=false,syncStatus=null,syncTransportError='';
 const PAGE_SIZE=30;
 let pageNumber=1;
@@ -86,7 +87,7 @@ async function refreshWithFeedback(id,task){
  finally{const current=$(id);if(current){current.disabled=false;current.removeAttribute('aria-busy');current.classList.remove('is-loading');current.textContent=label}}
 }
 function renderNavigation(){
- const choice=folder?'folder:'+folder:view;
+ const choice=douyinPage==='queue'?'queue':folder?'folder:'+folder:view;
  $('favoritecount').textContent=state.videos.filter(v=>v.favorite).length;
  $('localcount').textContent=state.videos.length;
  const folderKey=JSON.stringify([state.folders,state.membership]);
@@ -100,12 +101,30 @@ function renderNavigation(){
  $('viewtitle').textContent=folder?state.folders.find(f=>f.id===folder)?.name||'收藏夹':view==='local'?'本地素材':'全部收藏';
  $('viewcontext').textContent=folder?'抖音收藏 / 收藏夹':'抖音收藏';
 }
+function selectDouyinPage(page,{focus=true}={}){
+ const ws=document.querySelector('.workspace'),changed=douyinPage!==page;
+ if(changed){if(douyinPage==='queue')queueScroll=ws.scrollTop;else libraryScroll=ws.scrollTop}
+ douyinPage=page==='queue'?'queue':'library';
+ $('librarypage').hidden=douyinPage==='queue';$('queuepanel').hidden=douyinPage!=='queue';
+ $('selectionbar').hidden=currentModule!=='douyin'||douyinPage==='queue'||!selection.size;
+ if(currentModule==='douyin'){
+  history.replaceState(null,'','#'+(douyinPage==='queue'?'queue':'douyin'));
+  document.title='Workdesk · '+(douyinPage==='queue'?'处理队列':'抖音收藏');
+  document.querySelector('.skip-link').href=douyinPage==='queue'?'#queuepanel':'#library';
+ }
+ if(state)renderNavigation();if(changed)ws.scrollTop=douyinPage==='queue'?queueScroll:libraryScroll;
+ if(focus){(douyinPage==='queue'?$('queuepanel'):$('scope')).focus({preventScroll:true});closeCompactNavigation()}
+}
+function openQueuePage(){if(currentModule!=='douyin')selectModule('douyin',{animate:false});selectDouyinPage('queue')}
 function selectSource(value){
+ if(value==='queue'){openQueuePage();return}
+ const keepPage=douyinPage==='queue'&&value===(folder?'folder:'+folder:view);
+ selectDouyinPage('library',{focus:false});
  if(typeof selectModule==='function'&&currentModule!=='douyin')selectModule('douyin',{animate:false});
- folder=value.startsWith('folder:')?value.slice(7):'';view=folder?'favorites':value;pageNumber=1;
+ folder=value.startsWith('folder:')?value.slice(7):'';view=folder?'favorites':value;if(!keepPage)pageNumber=1;
  // Search and status remain explicit user filters when changing the source.
  render();closeCompactNavigation();
- $('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
+ if(!keepPage)$('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
 }
 function render(){
  updateNavigationMotion(state.navigation_motion);
@@ -152,7 +171,7 @@ function render(){
  }
  const candidates=items.filter(eligible),selectedVisible=candidates.filter(v=>selection.has(v.id)).length;
  $('selectall').disabled=!candidates.length;$('selectall').checked=candidates.length>0&&selectedVisible===candidates.length;$('selectall').indeterminate=selectedVisible>0&&selectedVisible<candidates.length;
- $('selectionbar').hidden=document.body.dataset.module!=='douyin'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=!selection.size;
+ $('selectionbar').hidden=document.body.dataset.module!=='douyin'||douyinPage==='queue'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=!selection.size;
  $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>state.videos.find(v=>v.id===id)?.raw)?'生成知识笔记':'加入知识库';
  const jobsKey=JSON.stringify([state.jobs,state.topics,state.jobs.map(j=>state.videos.find(v=>v.id===j.video)?.title)]);
  if(jobsKey!==jobsFingerprint){
@@ -168,11 +187,27 @@ let panelCollapsed=false,compactPanelOpen=false;
 let navigationAnimations=[];
 let navigationReflow=null,navigationGeneration=0;
 const railGlyphAnimations=new Map();
+const moduleGlyphAnimations=new Map();
+function animateModuleGlyph(name){
+ if(!navigationMotionEnabled())return;
+ const button=$(name==='home'?'homemodule':name==='health'?'healthmodule':name==='purchases'?'purchasemodule':'douyinmodule');
+ const el=name==='douyin'?button.querySelector('.rail-symbol'):button.querySelector('svg');
+ // One composited layer per icon. Do not transform individual SVG strokes,
+ // rotate a bookmark, or restart unrelated icons during rapid module switches.
+ const previous=moduleGlyphAnimations.get(el),visible=getComputedStyle(el).transform;
+ previous?.cancel();
+ const start=previous&&visible!=='none'?visible:'translateY(2px) scale(.96)';
+ const animation=el.animate([{transform:start},{transform:'translateY(0) scale(1)'}],{duration:360,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
+ moduleGlyphAnimations.set(el,animation);
+ animation.finished.then(()=>{if(moduleGlyphAnimations.get(el)===animation){moduleGlyphAnimations.delete(el);animation.cancel()}}).catch(()=>{});
+}
 function setRailGlyphState(expanded){
- const toggle=$('navtoggle'),module=$(document.body.dataset.module==='purchases'?'purchasemodule':'douyinmodule');
+ const toggle=$('navtoggle'),name=document.body.dataset.module;
+ if(!['douyin','purchases','health'].includes(name)){toggle.setAttribute('aria-expanded','false');return}
+ const module=$(name==='purchases'?'purchasemodule':name==='health'?'healthmodule':'douyinmodule');
  const changed=module.getAttribute('aria-expanded')!==String(expanded);
  if(!changed){toggle.setAttribute('aria-expanded',String(expanded));return}
- const pieces=module.id==='purchasemodule'?[toggle.querySelector('svg path:last-child')]:[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child'),toggle.querySelector('svg path:last-child')];
+ const pieces=module.id!=='douyinmodule'?[toggle.querySelector('svg path:last-child')]:[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child'),toggle.querySelector('svg path:last-child')];
  // Read the visible mid-flight state before cancelling: rapid reversal never
  // snaps to the previous endpoint. Only transforms/opacity are animated.
  const before=pieces.map(el=>({transform:getComputedStyle(el).transform,opacity:getComputedStyle(el).opacity}));
@@ -193,7 +228,7 @@ function navigationMotionEnabled(){
 function updateNavigationMotion(mode){
  mode=['system','on','off'].includes(mode)?mode:'system';
  if(document.body.dataset.navigationMotion!==mode){
-   stopNavigationAnimation();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();document.body.dataset.navigationMotion=mode;
+   stopNavigationAnimation();moduleGlyphAnimations.forEach(a=>a.cancel());moduleGlyphAnimations.clear();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();document.body.dataset.navigationMotion=mode;
   document.documentElement.dataset.navigationMotion=mode;
  }
  $('navigationmotion').value=mode;
@@ -212,7 +247,7 @@ function gridColumnCount(){
 function transitionNavigation(change){
  const workspace=document.querySelector('.workspace'),grid=$('cards');
  const before=workspace.getBoundingClientRect(),gridBefore=grid.getBoundingClientRect();
- const nodes=document.body.dataset.module==='douyin'?[...grid.querySelectorAll(':scope>.card')]:[];
+ const nodes=document.body.dataset.module==='douyin'&&douyinPage==='library'?[...grid.querySelectorAll(':scope>.card')]:[];
  // Capture the actual displayed geometry, including an interrupted transition.
  // The same nodes stay mounted; no screenshot, opacity hand-off or grid zoom.
  const starts=nodes.map(card=>({card,rect:card.getBoundingClientRect()}));
@@ -280,7 +315,7 @@ function updateNavigationLayout(){
 }
 function updateNavigationToggle(){
  const home=document.body.dataset.module==='home';
- const hasPanel=['douyin','purchases'].includes(document.body.dataset.module);
+ const hasPanel=['douyin','purchases','health'].includes(document.body.dataset.module);
  const expanded=hasPanel&&(compactNavigation.matches?compactPanelOpen:!panelCollapsed);
  // Commit the delay state before the glyph's computed-style reads flush layout.
  // Otherwise opening inherits the closing visibility delay: text fades while
@@ -293,6 +328,7 @@ function updateNavigationToggle(){
  setRailGlyphState(expanded);
  $('douyinmodule').setAttribute('aria-label',document.body.dataset.module==='douyin'?(expanded?'抖音收藏，收起导航':'抖音收藏，展开导航'):'打开抖音收藏');
  $('purchasemodule').setAttribute('aria-label',document.body.dataset.module==='purchases'?(expanded?'购买决策夹，收起导航':'购买决策夹，展开导航'):'打开购买决策夹');
+ $('healthmodule').setAttribute('aria-label',document.body.dataset.module==='health'?(expanded?'个人健康，收起导航':'个人健康，展开导航'):'打开个人健康');
  $('homemodule').removeAttribute('aria-expanded');
  $('homemodule').setAttribute('aria-label',home?'首页，当前模块':'打开首页');
  $('navtoggle').setAttribute('aria-label',expanded?'收起导航':'展开导航');$('navtoggle').title=expanded?'收起导航':'展开导航';
@@ -303,11 +339,12 @@ function closeCompactNavigation(restoreFocus=false){
  transitionNavigation(()=>{compactPanelOpen=false;updateNavigationToggle()});
 }
 function toggleNavigation(){
- if(!['douyin','purchases'].includes(document.body.dataset.module))return;
+ if(!['douyin','purchases','health'].includes(document.body.dataset.module))return;
  transitionNavigation(()=>{
  if(compactNavigation.matches)compactPanelOpen=!compactPanelOpen;
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
  updateNavigationToggle();
+ if(document.body.dataset.module!=='douyin')animateModuleGlyph(document.body.dataset.module);
  });
 }
 $('navtoggle').onclick=toggleNavigation;
@@ -316,7 +353,7 @@ $('douyinmodule').onclick=toggleNavigation;
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&compactPanelOpen&&!document.querySelector('dialog:modal')){e.preventDefault();closeCompactNavigation(true)}});
 document.addEventListener('click',e=>{if(!e.target.closest('#modulepanel,.module-rail,dialog')&&!document.querySelector('dialog:modal'))closeCompactNavigation()});
 compactNavigation.addEventListener('change',updateNavigationLayout);updateNavigationLayout();
-reducedNavigationMotion.addEventListener('change',()=>{if(!navigationMotionEnabled()){stopNavigationAnimation();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear()}});
+reducedNavigationMotion.addEventListener('change',()=>{if(!navigationMotionEnabled()){stopNavigationAnimation();moduleGlyphAnimations.forEach(a=>a.cancel());moduleGlyphAnimations.clear();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear()}});
 $('navigationmotion').onchange=async()=>{
  const mode=$('navigationmotion').value;
  const result=await action('navigation_motion',{mode});
@@ -326,17 +363,17 @@ const resetPage=()=>{pageNumber=1;if(state)render()};
 $('search').oninput=resetPage;$('status').onchange=resetPage;$('sort').onchange=resetPage;
 $('prevpage').onclick=()=>changePage(pageNumber-1);$('nextpage').onclick=()=>changePage(pageNumber+1);
 $('sync').onclick=startFavoritesRefresh;$('login').onclick=()=>action('login');$('openlogin').onclick=async()=>{const r=await action('open_login');if(r)toast('扫码完成后关闭窗口，刷新在后台进行')};$('refresh').onclick=()=>refreshWithFeedback('refresh',async()=>Boolean(await action('refresh')));
-$('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queueopen').onclick=()=>{closeCompactNavigation();$('queuepanel').showModal()};$('closequeue').onclick=()=>$('queuepanel').close();$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
+$('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queue-refresh').onclick=()=>refreshWithFeedback('queue-refresh',refresh);$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
 $('import').onclick=async()=>{const r=await action('import',{links:$('links').value});if(r){$('links').value='';view='local';folder='';pageNumber=1;render();$('tools').close();toast('已加入待选列表')}};
 $('clear').onclick=()=>{selection.clear();render()};
 $('selectall').onclick=()=>{const candidates=pageSlice(visible()).filter(eligible);if(candidates.some(v=>selection.has(v.id))){for(const v of candidates)selection.delete(v.id)}else{for(const v of candidates){if(selection.size>=20)break;selection.add(v.id)}}render()};
 document.addEventListener('change',e=>{const id=e.target.dataset.video;if(!id)return;if(e.target.checked){if(selection.size>=20){e.target.checked=false;toast('每批最多 20 条');return}selection.add(id)}else selection.delete(id);render();document.querySelector('[data-video='+JSON.stringify(id)+']')?.focus({preventScroll:true})});
-$('enqueue').onclick=async()=>{if(!confirm('为所选 '+selection.size+' 条作品生成知识笔记，会使用 Codex 额度。已有原始资料不重复保存，归类不明确时等待你选择。继续？'))return;const r=await action('enqueue',{ids:[...selection]});if(r){selection.clear();render();$('queuepanel').showModal();toast('已加入 '+r.added.length+' 条；跳过 '+r.skipped.length+' 条重复项')}};
+$('enqueue').onclick=async()=>{if(!confirm('为所选 '+selection.size+' 条作品生成知识笔记，会使用 Codex 额度。已有原始资料不重复保存，归类不明确时等待你选择。继续？'))return;const r=await action('enqueue',{ids:[...selection]});if(r){selection.clear();render();openQueuePage();toast('已加入 '+r.added.length+' 条；跳过 '+r.skipped.length+' 条重复项')}};
 document.addEventListener('click',async e=>{const note=e.target.closest('[data-open-job],[data-open-video]');if(note){e.preventDefault();if(note.getAttribute('aria-busy')==='true')return;note.setAttribute('aria-busy','true');try{await api('open_note',note.dataset.openJob?{job:note.dataset.openJob}:{video:note.dataset.openVideo});toast('已在 Obsidian 打开笔记')}catch(err){toast(err.message)}finally{note.removeAttribute('aria-busy')}return}const elPage=e.target.closest('[data-page]');if(elPage){changePage(Number(elPage.dataset.page));return}const cover=e.target.closest('.cover');if(cover&&!e.target.closest('label,input')){const input=cover.querySelector('[data-video]');if(input&&!input.disabled)input.click();return}const el=e.target.closest('button');if(!el)return;const d=el.dataset;if(d.retry)await action('retry',{id:d.retry});if(d.cancel)await action('cancel',{id:d.cancel});if(d.place){const t=document.querySelector('[data-topic="'+d.place+'"]');await action('place',{id:d.place,topic:t.value})}if(d.preview){try{const r=await api('preview?id='+encodeURIComponent(d.preview));$('previewtext').textContent=r.note_markdown?r.note_markdown+'\n\n画面摘要：\n'+r.visual_summary+'\n\n待核实：\n'+(r.uncertainties||[]).join('\n'):'尚未生成草稿。';$('preview').showModal()}catch(err){toast(err.message)}}});
 $('closepreview').onclick=()=>$('preview').close();
 $('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toast('请扫码登录；成功后关闭窗口，再刷新收藏')};
 // Only a complete pointer gesture on the actual outer backdrop dismisses a panel.
-// A nested preview closes on its own, leaving its parent queue open.
+// Preview closes independently; the underlying queue remains a normal page.
 for(const dialog of document.querySelectorAll('dialog')){
  if(dialog.id==='purchaseeditor')continue; // Its own closer protects unsaved edits.
  let down=null;

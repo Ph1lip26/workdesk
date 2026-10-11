@@ -56,13 +56,13 @@ svg{width:20px;height:20px;flex:none;stroke:currentColor;stroke-width:1.8;fill:n
    unfolds into the adjacent navigation; the play symbol recedes behind it. */
 .rail-symbol{position:relative;display:block;width:24px;height:24px;perspective:100px}
 .rail-symbol svg{position:absolute;inset:0;width:24px;height:24px;transform-origin:50% 50%;transition:none!important}
-.rail-panel-glyph{opacity:0;transform:translateX(7px) rotateY(45deg) scale(.84)}
-.rail-video-glyph{opacity:1;transform:translateX(0) rotateY(0) scale(1)}
+.rail-panel-glyph{opacity:0;transform:translateX(3px) scale(.96)}
+.rail-video-glyph{opacity:1;transform:translateX(0) scale(1)}
 .rail-panel-glyph rect{fill:#ffffff08}
 .rail-panel-glyph path{opacity:0;transform:translateX(-3px);transform-box:view-box;transform-origin:center}
 #douyinmodule[aria-expanded=true] .rail-panel-glyph path{opacity:1;transform:translateX(0)}
-#douyinmodule[aria-expanded=true] .rail-panel-glyph{opacity:1;transform:translateX(0) rotateY(0) scale(1)}
-#douyinmodule[aria-expanded=true] .rail-video-glyph{opacity:0;transform:translateX(-7px) rotateY(-40deg) scale(.84)}
+#douyinmodule[aria-expanded=true] .rail-panel-glyph{opacity:1;transform:translateX(0) scale(1)}
+#douyinmodule[aria-expanded=true] .rail-video-glyph{opacity:0;transform:translateX(-3px) scale(.96)}
 #navtoggle{perspective:100px}
 #navtoggle svg path:last-child{transform-box:view-box;transform-origin:15px 12px;transition:none!important}
 #navtoggle[aria-expanded=false] svg path:last-child{transform:translateX(1px) rotateY(180deg)}
@@ -288,7 +288,7 @@ pre{font:500 13px/1.9 var(--font);white-space:pre-wrap;overflow-wrap:anywhere}
 body[data-navigation-motion=off] :is(.module-panel,.panel-heading,.panel-nav,.panel-footer,#navtoggle svg path:last-child,#douyinmodule svg),body[data-navigation-motion=off] .window-chrome::before,body[data-navigation-motion=off] #douyinmodule::before{transition:none!important}
 
 /* Master/detail decision memory: titles live in the shared navigation panel. */
-.workspace .purchase-view{max-width:1280px;margin:0 auto;padding:28px 34px 42px;outline:none}
+.workspace .purchase-view{width:min(100%,max(360px,calc(100vw - var(--rail-width) - var(--panel-width) - 16px)));container-type:inline-size;container-name:purchase-reading;max-width:1280px;margin:0 auto;padding:28px 34px 42px;outline:none}
 .purchase-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:24px}
 .purchase-header>div:first-child{min-width:0}.purchase-header h1{font-size:30px;font-weight:650;letter-spacing:-.6px;line-height:1.35;overflow-wrap:anywhere}
 .purchase-header .view-context{margin-bottom:8px;font-size:13px;color:var(--muted)}
@@ -347,8 +347,9 @@ body[data-module=purchases] .panel-nav{display:flex;flex-direction:column;overfl
 .purchase-discard p{margin-bottom:10px}.purchase-brief{width:min(740px,calc(100vw - 40px));max-width:740px}
 .purchase-brief textarea{margin:18px 0;min-height:290px;resize:vertical;font-size:14px}
 #home-purchase-entry{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-@container workarea (max-width:750px){.purchase-header{flex-direction:column;gap:16px}.purchase-header-actions{justify-content:flex-start}.purchase-header h1{font-size:27px}.purchase-detail-grid{grid-template-columns:1fr}.purchase-detail-meta{gap:10px 14px}.purchase-candidate-records{grid-template-columns:1fr}}
-@container workarea (max-width:550px){.workspace .purchase-view{padding:22px 20px 32px}.purchase-section{padding:20px;border-radius:25px}.purchase-header h1{font-size:25px}.purchase-detail-text{font-size:15px}.purchase-summary-section .purchase-detail-text{font-size:17px}.purchase-header-actions button{font-size:12px;padding:8px 10px}}
+@container purchase-reading (max-width:750px){.purchase-header{flex-direction:column;gap:16px}.purchase-header-actions{justify-content:flex-start}.purchase-header h1{font-size:27px}.purchase-detail-grid{grid-template-columns:1fr}.purchase-detail-meta{gap:10px 14px}.purchase-candidate-records{grid-template-columns:1fr}}
+@media(max-width:550px){.workspace .purchase-view{width:100%;padding:22px 20px 32px}}
+@container purchase-reading (max-width:550px){.purchase-section{padding:20px;border-radius:25px}.purchase-header h1{font-size:25px}.purchase-detail-text{font-size:15px}.purchase-summary-section .purchase-detail-text{font-size:17px}.purchase-header-actions button{font-size:12px;padding:8px 10px}}
 @media(max-width:600px){.purchase-form-grid,.purchase-candidate-fields{grid-template-columns:1fr}.purchase-editor-actions{flex-wrap:wrap}.purchase-editor-actions>span{max-width:none;flex-basis:100%}.purchase-editor,.purchase-brief{padding:22px}}
 @supports(corner-shape:squircle){.purchase-section,.purchase-empty,.purchase-editor :is(input,textarea,select),.purchase-candidate{corner-shape:squircle}}
 
@@ -410,7 +411,7 @@ body[data-module=home] .window-chrome::before{display:none}
 .home-sorting,.home-sorting *{cursor:grabbing!important;user-select:none}
 .home-drag-preview{position:fixed;left:0;top:0;z-index:65;pointer-events:none!important;margin:0;opacity:.98;box-shadow:0 22px 60px #0009;border-color:#666;will-change:transform;overflow:hidden;transform-origin:center}
 .home-drag-preview button{pointer-events:none}
-#homemodule svg{transition:transform 180ms var(--ease-out)}#homemodule:active svg{transform:scale(.95)}
+#homemodule svg{transition:transform 180ms var(--ease-out)}
 @container workarea (max-width:1050px){.home-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tile-phase{gap:18px}}
 @container workarea (max-width:600px){.workspace .home-view{padding:24px 20px 36px}.home-card-grid{grid-template-columns:1fr;gap:14px}.home-tile-wide{grid-column:span 1}.home-tile{padding:19px 20px 16px;min-height:0}.tile-phase{align-items:flex-start;flex-direction:column;gap:8px}.tile-phase p{text-align:left}.tile-phase h3{font-size:24px}.status-grid{gap:14px 18px}.home-top>div:first-child{flex-direction:column;gap:5px}.home-top{align-items:flex-start;margin-bottom:20px}.tile-foot .stage-line{font-size:11px}}
 @container workarea (max-width:360px){.workspace .home-view{padding:20px 14px 30px}.home-tile{padding:17px 16px 14px;border-radius:17px}.status-grid{grid-template-columns:1fr}.home-top-actions{gap:0}.home-top-actions button{font-size:11px;padding:5px 6px}.home-top h1{font-size:20px}.tile-foot{flex-wrap:wrap}.tile-phase p{font-size:11px}}
@@ -496,7 +497,7 @@ body[data-navigation-motion=off] #homemodule svg{transition:none!important}
    reflection. It is a static CSS finish, not a shader, blur or colored light wash. */
 body::before{content:none;position:fixed;inset:0;pointer-events:none}
 .workspace{z-index:2}
-.module-rail{box-shadow:inset -1px 0 0 #ffffff08;background-color:var(--rail-bg);background-image:var(--metal-finish)}
+.module-rail{box-shadow:inset -1px 0 0 #ffffff08;background-color:var(--rail-bg);background-image:none}
 .module-panel{box-shadow:inset 1px 0 0 #ffffff06;background:var(--panel-bg);border-right-color:#ffffff0e}
 .rail-button.active{background-color:#303236;background-image:var(--metal-finish);border-color:#ffffff24;box-shadow:inset 0 1px 0 #ffffff30,inset 1px 0 0 #ffffff0d,inset 0 -1px 0 #00000050,0 4px 12px #0003}
 .panel-link[aria-current=page]{background:#303338;border-color:#ffffff10;color:var(--text);box-shadow:inset 0 1px 0 #ffffff08}
@@ -544,3 +545,70 @@ input[type=checkbox]:indeterminate::after{mask-image:url("data:image/svg+xml,%3C
 .is-syncing #sync{opacity:1;color:var(--text);border-color:var(--metal-edge)}
 @media(max-width:900px){.sync-status-copy{align-items:flex-start;flex-direction:column;gap:5px}}
 @media(prefers-reduced-motion:reduce){.sync-track>span{animation:none;width:100%;opacity:.45}}
+
+/* Functional overview: retain one viewport and the user's previous relative order. */
+.health-view{max-width:1200px;margin:auto;padding:28px 34px 40px;outline:none}
+.health-summary{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.weight-current{font-size:64px;font-weight:650;letter-spacing:-1.5px;line-height:1.3;font-variant-numeric:tabular-nums}
+.weight-current>span{font-size:18px;letter-spacing:0;margin-left:12px;color:var(--muted)}
+.health-unit-control{display:flex;align-items:center;gap:14px;color:var(--muted)}
+.health-section-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:16px}
+.health-section-heading h2{font-size:20px;font-weight:650}
+.health-view select,#weighteditor input,#weighteditor select{background:var(--control);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:inherit}
+.health-view .purchase-section{margin-bottom:20px}
+.weight-chart{display:block;width:100%;max-height:260px;color:var(--text);overflow:visible}
+.weight-chart polyline{fill:none;stroke:currentColor;stroke-width:2;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
+.weight-chart circle{fill:currentColor}.weight-chart text{fill:var(--muted);font-size:12px}.weight-gridline{stroke:var(--line);stroke-width:.5;opacity:.5}
+.weight-chart-mini{height:54px;margin-top:8px}
+.weight-row{display:flex;width:100%;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--line);border-radius:0;font-variant-numeric:tabular-nums;color:var(--text)}
+.weight-row>span:last-child{color:var(--muted);font-size:13px}
+#weighteditor label{display:flex;flex-direction:column;gap:8px;margin:18px 0}
+.weight-input-row{display:grid;grid-template-columns:1fr 110px;gap:16px}
+.home-module-card [data-health-add]{position:relative;z-index:2}
+@media(min-width:780px){.home-card-grid{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:18px}.home-tile{padding:16px}.tile-phase{flex-direction:column;align-items:flex-start}.tile-foot{gap:6px}.home-tile .stage-line{display:none}.tile-record-top small{white-space:normal}.home-tile .status-grid{gap:6px}.home-tile .tile-record{padding-top:8px;padding-bottom:8px}.home-tile .tile-foot .home-source{font-size:12px}}
+@media(max-width:779px){.health-view{padding:20px}.health-summary{gap:12px}.weight-current{font-size:42px}.health-unit-control{flex-direction:column;gap:6px}.health-section-heading{gap:8px}}
+
+/* Existing Lucide strokes settle around their own visual center. */
+:is(#homemodule,#healthmodule,#purchasemodule) svg,:is(#homemodule,#healthmodule) svg path{transform-box:fill-box;transform-origin:center}
+
+
+/* Hoverable sparkline sits above the whole-card navigation link. */
+.weight-chart-interactive{position:relative;z-index:2;cursor:crosshair;border-radius:8px;touch-action:pan-y}
+.weight-chart-interactive:focus-visible{outline:2px solid var(--text);outline-offset:4px}
+.weight-chart-mini .weight-point-active{stroke:var(--metal-fill);stroke-width:2;r:10;vector-effect:non-scaling-stroke}
+.weight-hover-guide{stroke:currentColor;stroke-width:1;stroke-dasharray:2 4;opacity:.3;vector-effect:non-scaling-stroke;pointer-events:none}
+.weight-hover-guide[hidden]{display:none}
+.weight-point-tooltip{position:fixed;z-index:1000;pointer-events:none;padding:9px 12px;border:1px solid var(--metal-edge);border-radius:12px;background:var(--surface);color:var(--text);box-shadow:0 6px 22px #0002;font-size:13px;font-weight:650;line-height:1.5;font-variant-numeric:tabular-nums;white-space:nowrap;max-width:calc(100vw - 16px)}
+.weight-point-tooltip[hidden]{display:none}
+
+/* Readable home: whole page stays six tiles; text never disappears into ellipses.
+   Long evidence scrolls inside its own card, not behind the module-entry overlay. */
+.home-tile .tile-body{position:relative;z-index:2;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:5px}
+.home-tile .tile-body:focus-visible{outline:2px solid var(--muted);outline-offset:2px;border-radius:6px}
+.home-tile :is(.status-record>span,.tile-record-summary,.latest-note>strong,.tile-record-top>span,.tile-phase p){display:block;-webkit-line-clamp:unset;overflow:visible;white-space:normal;text-overflow:clip;overflow-wrap:anywhere}
+.home-tile .tile-phase{flex-direction:column;align-items:flex-start;gap:5px;margin-bottom:12px}
+.home-tile .tile-phase h3{white-space:normal;overflow:visible;text-overflow:clip;font-size:26px;line-height:1.3}
+.home-tile .tile-phase p{font-size:14px;line-height:1.55;text-align:left}
+.home-tile .status-grid{grid-template-columns:1fr;gap:12px}
+.home-tile .status-record>span{font-size:15px;line-height:1.6}
+.home-tile .status-record strong{font-size:14px;line-height:1.5}
+.home-tile .tile-record-summary,.home-tile .latest-note>strong{font-size:16px;line-height:1.65}
+.home-tile .schedule-copy .tile-record-top small{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.55}
+.home-tile .tile-foot>span{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+.home-tile .tile-foot .stage-line{display:block;flex:1;font-size:12px;line-height:1.5}
+.home-tile .collection-meta,.home-tile .material-meta,.home-tile .tile-note{font-size:14px;line-height:1.65;overflow-wrap:anywhere}
+.home-tile .tile-body::-webkit-scrollbar{width:6px}
+@media(min-width:780px) and (max-height:700px){.home-tile .tile-phase h3{font-size:22px}.home-tile .status-record>span{font-size:14px}.home-tile .tile-phase p{font-size:13px}}
+.queue-page{max-width:1280px;margin:0 auto;padding:28px 34px 42px;outline:none}
+.queue-page .queue-control{padding:14px 18px;margin-bottom:18px;border:1px solid var(--metal-edge);border-radius:18px;background:var(--control)}
+.queue-page #jobs{display:grid;grid-template-columns:1fr;gap:16px}
+.queue-page .job{padding:22px 24px;border:1px solid var(--metal-edge);border-radius:24px;background-color:var(--metal-fill);background-image:var(--metal-finish);box-shadow:var(--metal-shadow)}
+.queue-page .job-title{font-size:17px;font-weight:650;line-height:1.6}
+.queue-page .job-message{font-size:14px;line-height:1.8;white-space:pre-wrap}
+.queue-page .job-actions{font-size:14px;gap:10px}
+.queue-page .job-actions button{font-size:13px;min-height:36px}
+@media(max-width:800px){.queue-page{padding:22px 20px 32px}.queue-page .job{padding:18px 20px}}
+
+/* Uniform upright rail icons: a single composited transform, no path-level wobble. */
+#modules>.rail-button>svg,.rail-symbol{transform-origin:50% 50%;transition:none!important}
+#modules :is(#homemodule,#purchasemodule,#healthmodule)>svg{transform:none}

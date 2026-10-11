@@ -21,7 +21,7 @@ test('appearance is local, validated and has matching native palettes',()=>{
 test('integrated chrome retains native controls and isolated renderer',()=>{
  const main=fs.readFileSync(path.join(__dirname,'../desktop/main.cjs'),'utf8');
   assert.match(main,/titleBarStyle:'hidden'/);assert.match(main,/titleBarOverlay:colors/);
-  const appearance=require('../desktop/appearance.cjs');assert.equal(appearance.palette('night').color,'#131415');assert.equal(appearance.palette('day').color,'#d2d2d2');
+  const appearance=require('../desktop/appearance.cjs');assert.equal(appearance.palette('night').color,'#131415');assert.equal(appearance.palette('day').color,'#f5f5f5');
  const preload=fs.readFileSync(path.join(__dirname,'../desktop/preload.cjs'),'utf8');
  assert.match(preload,/desktop-shell/);assert.doesNotMatch(preload,/executeJavaScript|insertCSS|sendSync|exposeInMainWorld\(['"](?:require|process|ipcRenderer)/);
 });

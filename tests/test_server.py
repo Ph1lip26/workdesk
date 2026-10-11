@@ -9,7 +9,7 @@ import server
 class FakeService:
     def __init__(self):
         self.stop=threading.Event();self.sync_lock=threading.Lock();self.auth_lock=threading.Lock()
-        self.busy=None;self.store=self;self.bridge=self;self.closed=0
+        self.busy=None;self.store=self;self.bridge=self;self.closed=0;self.health=self
     def rows(self,query):
         return [{'id':'test'}] if self.busy and f"'{self.busy}'" in query else []
     def request(self,action,timeout):
@@ -43,6 +43,11 @@ class Tests(unittest.TestCase):
         if self.s.auth_lock.locked():self.s.auth_lock.release()
         if not self.s.stop.is_set():self.post()
         self.thread.join(3);sys.argv=self.old;self.patch.stop()
+    def test_health_endpoint_requires_local_token(self):
+        with self.assertRaises(HTTPError) as e:urlopen(self.origin+'/api/health',timeout=2)
+        self.assertEqual(e.exception.code,403)
+        request=Request(self.origin+'/api/health',headers={'X-Workbench-Token':self.token,'Origin':self.origin})
+        with urlopen(request,timeout=2) as result:self.assertEqual(result.status,200)
     def test_queued_protected(self):
         self.s.busy='queued';self.assertEqual(self.post()[0],400);self.assertFalse(self.s.stop.is_set());self.assertEqual(self.s.closed,0)
     def test_running_protected(self):

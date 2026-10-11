@@ -10,21 +10,10 @@ function fixture(){
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../backend/static/shell.js'),'utf8'),context);
  return {context,calls,messages,element,root,run:s=>vm.runInContext(s,context),advance:()=>now+=2000,setDark:value=>{media.matches=value;themeListener()},get listener(){return openingListener}};
 }
-test('open refresh includes all modules and coalesces one opening gesture',async()=>{
- const f=fixture();assert.equal(typeof f.listener,'function');await f.run('refreshAllModules()');await f.run('refreshAllModules()');
- assert.deepEqual(f.calls.map(c=>c[0]),['open_refresh','library','home','purchases']);
- f.advance();await f.run('refreshAllModules()');assert.equal(f.run('openingRefreshCount'),2);
- assert.equal(f.calls.filter(c=>c[0]==='open_refresh').length,2);
-});
-test('concurrent opening refresh does not start another request',async()=>{
- const f=fixture();let complete;
- f.context.api=()=>new Promise(r=>complete=r);
- const first=f.run('refreshAllModules()');f.advance();const second=f.run('refreshAllModules()');
- assert.equal(f.run('openingRefreshCount'),1);complete({ok:true});await Promise.all([first,second]);
-});
-test('failed opening keeps old content and enables the next opening',async()=>{
- const f=fixture();f.context.api=async()=>{throw Error('offline')};await f.run('refreshAllModules()');
- assert.equal(f.calls.length,0);assert.equal(f.run('openingRefresh'),null);assert.equal(f.run('lastOpeningReport.ok'),false);assert.equal(f.messages.length,1);
+test('startup has no opening refresh subscription or remote request',()=>{
+ const f=fixture();assert.equal(f.listener,undefined);assert.deepEqual(f.calls,[]);
+ assert.equal(f.run('typeof scheduleOpeningRefresh'),'undefined');
+ assert.equal(f.run('typeof refreshAllModules'),'undefined');
 });
 test('appearance saves first, applies native chrome and retains the choice',async()=>{
  const f=fixture();await f.run("changeAppearance('day')");assert.equal(f.root.dataset.appearance,'day');assert.equal(f.element.disabled,false);

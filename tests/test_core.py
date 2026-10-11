@@ -61,39 +61,39 @@ class Tests(unittest.TestCase):
         self.assertEqual(s.snapshot()['navigation_motion'],'on')
         self.assertEqual(Store(self.root/'db.sqlite3').setting('navigation_motion'),'on')
     def test_home_card_order_default_and_persistent(self):
-        s=self.service();order=['douyin','focus','status','later','next','materials']
-        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
+        s=self.service();order=['douyin','status','next','materials','purchases','health']
+        self.assertEqual(s.snapshot()['home_card_order'],['status','next','douyin','materials','purchases','health'])
         self.assertEqual(s.action('home_layout',dict(order=order))['order'],order)
         self.assertEqual(self.service().snapshot()['home_card_order'],order)
     def test_home_card_order_rejects_unknown_duplicate_and_nonlist(self):
         s=self.service()
         for order in (None,{},'status',[],['status']*5,['status','next','focus','douyin','secret'],[{},'next','focus','douyin','later']):
             with self.assertRaises(ValueError):s.action('home_layout',dict(order=order))
-        self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
+        self.assertEqual(s.snapshot()['home_card_order'],['status','next','douyin','materials','purchases','health'])
     def test_home_layout_does_not_change_tasks_or_notes(self):
         s=self.service();s.store.set_setting('paused','1');before=self.vault/'处理文件/AI学习/_索引.md'
         original=before.read_bytes();jobs=s.snapshot()['jobs'];videos=s.snapshot()['videos']
-        s.action('home_layout',dict(order=['later','status','next','focus','douyin','materials']))
+        s.action('home_layout',dict(order=['health','status','next','douyin','materials','purchases']))
         self.assertEqual(s.snapshot()['jobs'],jobs);self.assertEqual(s.snapshot()['videos'],videos)
         self.assertEqual(before.read_bytes(),original);self.assertEqual(s.store.setting('paused'),'1');self.assertFalse(s.wake.is_set())
     def test_corrupt_saved_layout_uses_default(self):
         s=self.service()
         for raw in ('bad json','["unknown"]','{}','null'):
             s.store.set_setting('home_card_order',raw)
-            self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
+            self.assertEqual(s.snapshot()['home_card_order'],['status','next','douyin','materials','purchases','health'])
     def test_legacy_five_card_order_is_extended_without_rewriting_settings(self):
         s=self.service();legacy=['douyin','focus','status','later','next']
         raw=json.dumps(legacy,separators=(',',':'));s.store.set_setting('home_card_order',raw)
-        self.assertEqual(s.snapshot()['home_card_order'],legacy+['materials'])
+        self.assertEqual(s.snapshot()['home_card_order'],['douyin','status','next','materials','purchases','health'])
         self.assertEqual(s.store.setting('home_card_order'),raw)
-        self.assertEqual(self.service().snapshot()['home_card_order'],legacy+['materials'])
+        self.assertEqual(self.service().snapshot()['home_card_order'],['douyin','status','next','materials','purchases','health'])
         with self.assertRaises(ValueError):s.action('home_layout',dict(order=legacy))
         self.assertEqual(s.store.setting('home_card_order'),raw)
     def test_invalid_legacy_order_is_not_migrated(self):
         s=self.service()
         for legacy in (['status']*5,['status','next','focus','douyin','unknown'],[{},'next','focus','douyin','later']):
             raw=json.dumps(legacy);s.store.set_setting('home_card_order',raw)
-            self.assertEqual(s.snapshot()['home_card_order'],['status','next','focus','douyin','later','materials'])
+            self.assertEqual(s.snapshot()['home_card_order'],['status','next','douyin','materials','purchases','health'])
             self.assertEqual(s.store.setting('home_card_order'),raw)
     def test_navigation_motion_rejects_invalid_values(self):
         s=self.service()
