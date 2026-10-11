@@ -8,6 +8,12 @@ from appearance import read_mode,save_mode
 TERMINAL={'completed','skipped','cancelled'}
 HOME_CARDS=('status','next','douyin','materials','purchases','health')
 LEGACY_HOME_CARDS=('status','next','focus','douyin','later','materials','purchases','health')
+RAIL_MODULES=('home','douyin','purchases','health')
+
+def rail_order(value):
+    if not isinstance(value,list) or len(value)!=len(RAIL_MODULES) or any(not isinstance(x,str) for x in value) or set(value)!=set(RAIL_MODULES):
+        raise ValueError('导航顺序必须包含全部功能且不能重复')
+    return value
 
 def home_order(value,legacy=False):
     if not isinstance(value,list) or any(not isinstance(x,str) for x in value):
@@ -328,7 +334,7 @@ class Service:
         return dict(videos=videos,jobs=jobs,folders=self.store.rows('SELECT * FROM folders ORDER BY name'),membership=self.store.rows('SELECT * FROM membership'),
                     browser=read_json(PRIVATE/'browser-state.json',dict(status='closed')),sync=json.loads(self.store.setting('sync_result','{}')),
                     syncing=self.sync_lock.locked(),sync_progress=self.sync_status()['progress'],authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
-                      appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
+                      appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),module_order=self.module_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
     def sync_status(self):
         started=getattr(self,'sync_started',0);running=self.sync_lock.locked()
         browser=read_json(PRIVATE/'browser-state.json',{})
@@ -340,6 +346,9 @@ class Service:
     def card_order(self):
         try:return home_order(json.loads(self.store.setting('home_card_order','[]')),legacy=True)
         except (ValueError,TypeError):return list(HOME_CARDS)
+    def module_order(self):
+        try:return rail_order(json.loads(self.store.setting('module_order','[]')))
+        except (ValueError,TypeError):return list(RAIL_MODULES)
     def update_job(self,jid,**kw):
         kw['updated']=time.time();self.store.execute('UPDATE jobs SET '+','.join(k+'=?' for k in kw)+' WHERE id=?',(*kw.values(),jid))
     def run_command(self,args,logfile,timeout=900,stdin=None):
@@ -625,6 +634,10 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             # Compatibility with older renderers: never scan or start a browser.
             return dict(ok=True,local_notes=None,remote='disabled')
         if name=='health_save':return self.health.save(payload)
+        if name=='module_order':
+            order=rail_order(payload.get('order'))
+            self.store.set_setting('module_order',json.dumps(order))
+            return dict(ok=True,order=order)
         if name=='health_delete':return self.health.delete(payload)
         if name=='purchase_save':return self.purchases.save(payload)
         if name=='home_layout':

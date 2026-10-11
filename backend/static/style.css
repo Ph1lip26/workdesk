@@ -408,6 +408,7 @@ body[data-module=home] .window-chrome::before{display:none}
 .detail-trigger{font-size:13px;color:#c0c0c0;margin-top:20px}.detail-source{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:26px;padding-top:16px;border-top:1px solid #ffffff16}
 .detail-source>span,.detail-boundary{font-size:11px;color:#aaa}.detail-boundary{margin-top:15px}
 .home-card-moving{opacity:.22;border-color:#d8d8d8}
+.home-card-placeholder{visibility:hidden}
 .home-sorting,.home-sorting *{cursor:grabbing!important;user-select:none}
 .home-drag-preview{position:fixed;left:0;top:0;z-index:65;pointer-events:none!important;margin:0;opacity:.98;box-shadow:0 22px 60px #0009;border-color:#666;will-change:transform;overflow:hidden;transform-origin:center}
 .home-drag-preview button{pointer-events:none}
@@ -612,3 +613,7 @@ input[type=checkbox]:indeterminate::after{mask-image:url("data:image/svg+xml,%3C
 /* Uniform upright rail icons: a single composited transform, no path-level wobble. */
 #modules>.rail-button>svg,.rail-symbol{transform-origin:50% 50%;transition:none!important}
 #modules :is(#homemodule,#purchasemodule,#healthmodule)>svg{transform:none}
+#modules>.rail-button{touch-action:none;user-select:none}
+.rail-drag-placeholder{visibility:hidden}
+.rail-drag-preview{position:fixed!important;z-index:1100;pointer-events:none!important;margin:0!important;visibility:visible;will-change:transform;box-shadow:0 8px 24px #0004;outline:1px solid var(--metal-edge)}
+.rail-sorting #modules,.rail-sorting .rail-drag-preview{cursor:grabbing}

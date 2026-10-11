@@ -127,6 +127,7 @@ function selectSource(value){
  if(!keepPage)$('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
 }
 function render(){
+ if(typeof syncRailOrder==='function')syncRailOrder();
  updateNavigationMotion(state.navigation_motion);
  renderNavigation();
  const allItems=visible(),items=pageSlice(allItems),scoped=scopeItems(),sync=state.sync||{},account=state.account||{},count=state.videos.filter(v=>v.favorite).length;

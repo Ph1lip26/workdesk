@@ -5,6 +5,7 @@ const HOME_CARD_IDS=['status','next','douyin','materials','purchases','health'];
 let currentModule='home',homeState=null,homeFingerprint='',homeBusy=false,homeDetail=null;
 let homeOrder=[...HOME_CARD_IDS],homeSavedOrder=[...HOME_CARD_IDS],homePendingSaves=0,homeSaveChain=Promise.resolve(),homeDrag=null,homeDeferredRender=false;
 const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0,purchases:0,health:0};
+function clearHomeLandingGhosts(){homeLandingGhosts.forEach(g=>{g.landingCard?.classList.remove('home-card-placeholder');g.getAnimations().forEach(a=>a.cancel());g.remove()});homeLandingGhosts.clear()}
 const homeArrow=document.querySelector('#enqueue svg').outerHTML,homeRefresh=document.querySelector('#sync svg').outerHTML;
 const homeGrip='<svg data-lucide="grip-vertical" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></svg>';
 const sourceMeta=id=>homeState?.sources.find(s=>s.id===id);
@@ -14,7 +15,7 @@ const validHomeOrder=order=>Array.isArray(order)&&order.length===HOME_CARD_IDS.l
 function selectModule(name,{animate=true}={}){
  if(!moduleRegistry[name])return;
  if(typeof closeWeightTooltip==='function')closeWeightTooltip();
- finishHomeDrag(true);homeLandingGhosts.forEach(g=>g.remove());homeLandingGhosts.clear();
+ finishHomeDrag(true);clearHomeLandingGhosts();
  const ws=document.querySelector('.workspace');moduleScroll[currentModule]=ws.scrollTop;
  stopNavigationAnimation();if(['purchases','health'].includes(name)&&compactNavigation.matches)compactPanelOpen=true;
  currentModule=name;document.body.dataset.module=name;
@@ -45,7 +46,7 @@ function homeRows(entries,kind,{compact=false}={}){
  return entries.map(item=>'<button class="tile-record '+(compact?'tile-record-compact':'')+'" data-home-detail="'+esc(kind+':'+item.id)+'"><span class="tile-record-top"><span>'+esc(item.title)+'</span><small>'+esc(item.status||'记录')+'</small></span>'+(compact?'':'<span class="tile-record-summary">'+esc(item.summary)+'</span>')+homeArrow+'</button>').join('');
 }
 function renderHomepage(){
- if(homeDrag){homeDeferredRender=true;return}
+ if(homeDrag||homeLandingGhosts.size){homeDeferredRender=true;return}
  const data=homeState;if(!data)return;homeDeferredRender=false;
  const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="重新读取首页">'+homeRefresh+'</button></div></header>';
  const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin" data-go-source="favorites">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
@@ -77,6 +78,7 @@ function renderHomepage(){
  syncHomeOrder();renderHomepageSummary();applyHomeOrder(homeOrder);
 }
 function renderHomepageSummary(){
+ if(homeDrag||homeLandingGhosts.size)return;
  if(typeof renderPurchaseHome==='function')renderPurchaseHome();
  if(typeof renderHealthHome==='function')renderHealthHome();
  const pt=$('home-purchases-summary');if(pt){const records=typeof purchaseState!=='undefined'?purchaseState?.records:[];const n=records?.filter(r=>!['decided','shelved'].includes(r.status)).length;pt.innerHTML='<div class="collection-total"><strong>'+(n??'—')+'</strong><span>项待决定</span></div><p class="tile-note">'+esc(records?.[0]?.title||'保存需求与上次结论')+'</p>'}
@@ -129,17 +131,19 @@ function applyHomeOrder(order,animate=false){
  if(!validHomeOrder(order))return;
  const grid=$('home-cards');homeOrder=[...order];if(!grid)return;
  const cards=[...grid.children],before=new Map(cards.map(c=>[c,c.getBoundingClientRect()])),focused=document.activeElement;
- homeFlipAnimations.forEach(a=>a.cancel());homeFlipAnimations.clear();
+ homeFlipAnimations.forEach((a,c)=>{a.cancel();c.style.willChange=''});homeFlipAnimations.clear();
  const statusCard=cards.find(c=>c.dataset.homeCard==='status');
  statusCard?.classList.remove('home-tile-wide');statusCard?.classList.add('home-tile-compact');
- for(const id of order){const card=cards.find(c=>c.dataset.homeCard===id);if(card)grid.append(card)}
+ // Move only displaced nodes; unchanged cards retain focus, scroll and layers.
+ for(const [i,id] of order.entries()){const card=cards.find(c=>c.dataset.homeCard===id);if(card&&grid.children[i]!==card)grid.insertBefore(card,grid.children[i]||null)}
  if(grid.contains(focused))focused.focus({preventScroll:true});
  if(animate&&navigationMotionEnabled())for(const card of cards){
-  if(card===homeDrag?.card)continue;
+  if(card===homeDrag?.card&&!homeDrag.keyboard)continue;
   const old=before.get(card),now=card.getBoundingClientRect(),dx=old.left-now.left,dy=old.top-now.top;
   if(Math.abs(dx)+Math.abs(dy)<1)continue;
-  const a=card.animate([{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'none'}],{duration:220,easing:'cubic-bezier(.22,1,.36,1)'});
-  homeFlipAnimations.set(card,a);a.finished.then(()=>{if(homeFlipAnimations.get(card)===a)homeFlipAnimations.delete(card)}).catch(()=>{});
+  card.style.willChange='transform';
+  const a=card.animate([{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'translate(0px,0px)'}],{duration:300,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
+  homeFlipAnimations.set(card,a);a.finished.then(()=>{if(homeFlipAnimations.get(card)===a){homeFlipAnimations.delete(card);card.style.willChange='';a.cancel()}}).catch(()=>{});
  }
 }
 function persistHomeOrder(){
@@ -159,20 +163,27 @@ function activateHomeDrag(d){
  d.active=true;d.card.classList.add('home-card-moving');d.handle.setAttribute('aria-pressed','true');
  document.body.classList.add('home-sorting');announceHomeLayout('已拿起卡片，可移动位置；Escape取消');
  if(d.keyboard)return;
+ // Hit-test fixed grid slots, never cards whose FLIP transform is in flight.
+ // Otherwise a stationary pointer repeatedly picks passing cards and reverses
+ // the order every frame, creating the observed flicker and layout thrashing.
+ homeFlipAnimations.forEach((a,c)=>{a.cancel();c.style.willChange=''});homeFlipAnimations.clear();
+ d.slots=homeOrder.map(id=>document.querySelector('[data-home-card="'+id+'"]').getBoundingClientRect());
+ d.card.classList.add('home-card-placeholder');
  const r=d.card.getBoundingClientRect(),ghost=d.card.cloneNode(true);
  ghost.removeAttribute('data-home-card');ghost.removeAttribute('role');ghost.setAttribute('aria-hidden','true');ghost.className='home-tile home-drag-preview';
  ghost.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));ghost.querySelectorAll('button,a,input,select').forEach(e=>e.tabIndex=-1);ghost.style.width=r.width+'px';ghost.style.height=r.height+'px';
  d.offsetX=d.x-r.left;d.offsetY=d.y-r.top;d.ghost=ghost;document.body.append(ghost);
+ ghost.style.transform='translate('+r.left+'px,'+r.top+'px) scale(1.012)';
+ d.ghost.querySelectorAll('.tile-body').forEach((body,i)=>{body.scrollTop=d.card.querySelectorAll('.tile-body')[i]?.scrollTop||0});
  d.frame=requestAnimationFrame(homeDragFrame);
 }
 function homeDragFrame(){
  const d=homeDrag;if(!d?.active||d.keyboard)return;
- const ws=document.querySelector('.workspace'),r=ws.getBoundingClientRect();
- if(d.y>r.bottom-48)ws.scrollTop+=Math.min(14,(d.y-r.bottom+48)/3);
- else if(d.y<r.top+48)ws.scrollTop-=Math.min(14,(r.top+48-d.y)/3);
+ if(d.lastX===d.x&&d.lastY===d.y){d.frame=requestAnimationFrame(homeDragFrame);return}
+ d.lastX=d.x;d.lastY=d.y;
  d.ghost.style.transform='translate('+(d.x-d.offsetX)+'px,'+(d.y-d.offsetY)+'px) scale(1.012)';
- const hit=document.elementFromPoint(d.x,d.y)?.closest('#home-cards>[data-home-card]');
- if(hit&&hit!==d.card)moveHomeCard(d.id,hit.dataset.homeCard);
+ const index=d.slots.findIndex(r=>d.x>=r.left&&d.x<=r.right&&d.y>=r.top&&d.y<=r.bottom);
+ if(index>=0&&homeOrder[index]!==d.id)moveHomeCard(d.id,homeOrder[index]);
  d.frame=requestAnimationFrame(homeDragFrame);
 }
 function finishHomeDrag(cancel=false){
@@ -184,16 +195,18 @@ function finishHomeDrag(cancel=false){
  if(d.ghost){
   const g=d.ghost;
   if(!cancel&&navigationMotionEnabled()){
-   const r=d.card.getBoundingClientRect(),from=g.getBoundingClientRect();homeLandingGhosts.add(g);
-   g.animate([{transform:'translate('+from.left+'px,'+from.top+'px) scale(1.012)',opacity:.9},{transform:'translate('+r.left+'px,'+r.top+'px) scale(1)',opacity:0}],{duration:180,easing:'cubic-bezier(.22,1,.36,1)'}).finished.finally(()=>{g.remove();homeLandingGhosts.delete(g)});
-  }else g.remove();
+   const r=d.card.getBoundingClientRect(),start=getComputedStyle(g).transform;g.landingCard=d.card;homeLandingGhosts.add(g);
+   // Keep the original hidden until the identical preview lands. No double
+   // exposure, shrinking fade or full homepage rebuild during this handoff.
+   g.animate([{transform:start},{transform:'translate('+r.left+'px,'+r.top+'px) scale(1)'}],{duration:360,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'}).finished.catch(()=>{}).finally(()=>{d.card.classList.remove('home-card-placeholder');g.remove();homeLandingGhosts.delete(g);if(!homeDrag&&!homeLandingGhosts.size){if(homeDeferredRender)renderHomepage();else renderHomepageSummary()}});
+  }else{g.remove();d.card.classList.remove('home-card-placeholder')}
  }
  if(d.active)d.handle.focus({preventScroll:true});
- if(homeDeferredRender)renderHomepage();else renderHomepageSummary();
+ if(!homeLandingGhosts.size){if(homeDeferredRender)renderHomepage();else renderHomepageSummary()}
 }
 document.addEventListener('pointerdown',e=>{
  const handle=e.target.closest('[data-home-handle]');if(!handle||e.button!==0||currentModule!=='home'||document.querySelector('dialog:modal'))return;
- finishHomeDrag(true);homeLandingGhosts.forEach(g=>g.remove());homeLandingGhosts.clear();
+ finishHomeDrag(true);clearHomeLandingGhosts();
  const grid=$('home-cards');handle.focus({preventScroll:true});e.preventDefault();grid.setPointerCapture(e.pointerId);
  homeDrag={id:handle.dataset.homeHandle,card:handle.closest('article'),handle,capture:grid,pointerId:e.pointerId,before:[...homeOrder],startX:e.clientX,startY:e.clientY,x:e.clientX,y:e.clientY,active:false};
 });

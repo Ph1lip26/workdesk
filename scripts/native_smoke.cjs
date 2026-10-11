@@ -42,6 +42,62 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('home has six movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===6"));
   check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('navtoggle').hidden&&document.getElementById('modulepanel').inert"));
   check('home content starts at primary rail',await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.querySelector('.module-rail').getBoundingClientRect().right)<1"));
+  if(process.env.WORKDESK_SMOKE_SCOPE==='rail-order'){
+   desk.show();await sleep(200);await js("updateNavigationMotion('on')");
+   const homeOrderBefore=await js('JSON.stringify(homeOrder)'),jobsBefore=await js('JSON.stringify(state.jobs)');
+   const point=async id=>js(`(()=>{const r=railButton('${id}').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`);
+   for(const mode of ['night','day'])for(const [width,height] of [[1180,760],[800,560]]){
+    w.setContentSize(width,height);await sleep(200);await js(`paintAppearance('${mode}');applyRailOrder(RAIL_IDS);api('module_order',{order:RAIL_IDS}).then(()=>refresh());selectModule('home',{animate:false})`);await sleep(160);
+    const from=await point('health'),to=await point('home');
+    wc.sendInputEvent({type:'mouseMove',...from});wc.sendInputEvent({type:'mouseDown',...from,button:'left',clickCount:1});await sleep(180);
+    check(`${mode} ${width}: short hold does not enter sorting`,await js('!railDrag?.active'));
+    await sleep(350);check(`${mode} ${width}: long hold lifts the icon without switching module`,await js("railDrag?.active&&currentModule==='home'&&getComputedStyle(railDrag.button).visibility==='hidden'"));
+    wc.sendInputEvent({type:'mouseMove',...to,modifiers:['leftButtonDown']});await sleep(80);
+    check(`${mode} ${width}: drop slot swaps exactly two modules`,await js("JSON.stringify(railOrder)===JSON.stringify(['health','douyin','purchases','home'])"));
+    const order=await js('JSON.stringify(railOrder)');await sleep(400);
+    check(`${mode} ${width}: stationary target does not oscillate`,await js('JSON.stringify(railOrder)'),order);
+    wc.sendInputEvent({type:'mouseUp',...to,button:'left',clickCount:1});await sleep(400);
+    check(`${mode} ${width}: drop persists and never triggers module click`,await js("!railSaving&&!railDrag&&!railLanding&&JSON.stringify(state.module_order)===JSON.stringify(railOrder)&&currentModule==='home'&&!document.querySelector('.rail-drag-preview,.rail-drag-placeholder')"));
+    check(`${mode} ${width}: logo and bottom controls stay outside sorting`,await js("!document.getElementById('modules').contains(document.querySelector('.workspace-mark'))&&!document.getElementById('modules').contains(document.getElementById('toolsopen'))"));
+   }
+   await wc.reload();await sleep(800);
+   check('saved module order survives renderer reload',await js("railOrder[0]==='health'&&document.getElementById('modules').firstElementChild.id==='healthmodule'"));
+   const from=await point('health'),to=await point('purchases'),before=await js('JSON.stringify(railOrder)');
+   wc.sendInputEvent({type:'mouseMove',...from});wc.sendInputEvent({type:'mouseDown',...from,button:'left',clickCount:1});await sleep(520);wc.sendInputEvent({type:'mouseMove',...to,modifiers:['leftButtonDown']});await sleep(70);
+   await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");wc.sendInputEvent({type:'mouseUp',...to,button:'left',clickCount:1});await sleep(400);
+   check('Escape restores previous order without persistence',await js('JSON.stringify(railOrder)'),before);
+   const click=await point('purchases');wc.sendInputEvent({type:'mouseMove',...click});wc.sendInputEvent({type:'mouseDown',...click,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...click,button:'left',clickCount:1});await sleep(250);
+   check('ordinary click still opens its module',await js("currentModule==='purchases'&&!railDrag"));
+   check('rail sort does not change homepage order or jobs',await js('JSON.stringify(homeOrder)')===homeOrderBefore&&await js('JSON.stringify(state.jobs)')===jobsBefore);
+   check('rail sorting has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'rail-order',checks},null,2));await desk.quit();return;
+  }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='home-sort'){
+   desk.show();await sleep(200);await js("updateNavigationMotion('on')");
+   const jobs=await js('JSON.stringify(state.jobs)');
+   for(const mode of ['night','day'])for(const [width,height] of [[1180,760],[800,560]]){
+    w.setContentSize(width,height);await sleep(220);await js(`paintAppearance('${mode}');applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()`);await js('homeSaveChain');
+    const points=await js("(()=>{const a=document.querySelector('[data-home-handle=next]').getBoundingClientRect(),b=document.querySelector('[data-home-card=douyin]').getBoundingClientRect();return {from:{x:Math.round(a.left+a.width/2),y:Math.round(a.top+a.height/2)},to:{x:Math.round(b.left+b.width/2),y:Math.round(b.top+b.height/2)}}})()");
+    wc.sendInputEvent({type:'mouseMove',...points.from});wc.sendInputEvent({type:'mouseDown',...points.from,button:'left',clickCount:1});
+    wc.sendInputEvent({type:'mouseMove',x:points.from.x-15,y:points.from.y+20,modifiers:['leftButtonDown']});await sleep(60);
+    wc.sendInputEvent({type:'mouseMove',...points.to,modifiers:['leftButtonDown']});await sleep(70);
+    check(`${mode} ${width}: fixed target slot receives dragged card`,await js("homeDrag?.active&&homeOrder[2]==='next'&&document.querySelector('[data-home-card=next]').classList.contains('home-card-placeholder')"));
+    const trace=await js("new Promise(resolve=>{const orders=new Set(),g=document.getElementById('home-cards');let mutations=0,frames=0;const observer=new MutationObserver(list=>{mutations+=list.length});observer.observe(g,{childList:true});const start=performance.now();function tick(){orders.add(JSON.stringify(homeOrder));frames++;if(performance.now()-start<550)requestAnimationFrame(tick);else{observer.disconnect();resolve({orders:orders.size,mutations,frames})}}requestAnimationFrame(tick)})");
+    check(`${mode} ${width}: stationary pointer never oscillates or reorders DOM`,trace.orders===1&&trace.mutations===0&&trace.frames>5);
+    check(`${mode} ${width}: no duplicate exposed card while dragging`,await js("getComputedStyle(homeDrag.card).visibility==='hidden'&&getComputedStyle(homeDrag.ghost).visibility==='visible'"));
+    wc.sendInputEvent({type:'mouseUp',...points.to,button:'left',clickCount:1});await sleep(70);
+    check(`${mode} ${width}: landing keeps one preview without opacity fade`,await js("homeLandingGhosts.size===1&&[...homeLandingGhosts][0].getAnimations().every(a=>a.effect.getKeyframes().every(k=>!('opacity' in k)))"));
+    await sleep(430);await js('homeSaveChain');
+    check(`${mode} ${width}: preview and all temporary layers clean up`,await js("!homeDrag&&!homeLandingGhosts.size&&!homeFlipAnimations.size&&!document.querySelector('.home-drag-preview,.home-card-placeholder')&&[...document.querySelectorAll('#home-cards>.home-tile')].every(c=>!c.style.willChange&&getComputedStyle(c).visibility==='visible')"));
+    check(`${mode} ${width}: final order persists and page remains one viewport`,await js("JSON.stringify(state.home_card_order)===JSON.stringify(homeOrder)&&document.querySelector('.workspace').scrollHeight<=document.querySelector('.workspace').clientHeight+1"));
+   }
+   await js("applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()");await js('homeSaveChain');
+   await js("const h=document.querySelector('[data-home-handle=next]');h.focus();h.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));h.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));h.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await sleep(380);
+   check('keyboard cancellation restores baseline without hidden cards',await js("JSON.stringify(homeOrder)===JSON.stringify(HOME_CARD_IDS)&&!homeDrag&&!document.querySelector('.home-card-placeholder')"));
+   check('sorting never changes processing jobs',await js('JSON.stringify(state.jobs)'),jobs);
+   check('sorting has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'home-sort',checks},null,2));await desk.quit();return;
+  }
   if(process.env.WORKDESK_SMOKE_SCOPE==='readability'){
    const before=await js('JSON.stringify(state.jobs)'),order=await js('JSON.stringify(homeOrder)');
    await js("homeState.overview[0].summary='完整状态正文，分数、进度与当前问题必须保留，不能靠省略号隐藏。'.repeat(12)+'完整正文结束标记';homeState.schedule[0].title='完整安排标题，不应被单行截断。'.repeat(5)+'安排结束标记';renderHomepage()");
@@ -415,10 +471,10 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()");
   const dragPoints=await js("(()=>{const a=document.querySelector('[data-home-handle=next]').getBoundingClientRect(),b=document.querySelector('[data-home-card=douyin]').getBoundingClientRect();return {from:{x:Math.round(a.left+a.width/2),y:Math.round(a.top+a.height/2)},to:{x:Math.round(b.left+b.width/2),y:Math.round(b.top+100)}}})()");
   wc.sendInputEvent({type:'mouseMove',...dragPoints.from});wc.sendInputEvent({type:'mouseDown',...dragPoints.from,button:'left',clickCount:1});
-  wc.sendInputEvent({type:'mouseMove',x:dragPoints.from.x+30,y:dragPoints.from.y+15});await sleep(120);
+  wc.sendInputEvent({type:'mouseMove',x:dragPoints.from.x+30,y:dragPoints.from.y+15,modifiers:['leftButtonDown']});await sleep(120);
   check('native pointer drag lifts a card',await js("Boolean(homeDrag?.active&&document.querySelector('.home-drag-preview'))"));
-  for(let n=1;n<=12;n++){wc.sendInputEvent({type:'mouseMove',x:Math.round(dragPoints.from.x+(dragPoints.to.x-dragPoints.from.x)*n/12),y:Math.round(dragPoints.from.y+(dragPoints.to.y-dragPoints.from.y)*n/12)});await sleep(15)}
-  wc.sendInputEvent({type:'mouseUp',...dragPoints.to,button:'left',clickCount:1});await sleep(350);await js("homeSaveChain");
+  for(let n=1;n<=12;n++){wc.sendInputEvent({type:'mouseMove',x:Math.round(dragPoints.from.x+(dragPoints.to.x-dragPoints.from.x)*n/12),y:Math.round(dragPoints.from.y+(dragPoints.to.y-dragPoints.from.y)*n/12),modifiers:['leftButtonDown']});await sleep(15)}
+  wc.sendInputEvent({type:'mouseUp',...dragPoints.to,button:'left',clickCount:1});await sleep(450);await js("homeSaveChain");
   check('native card order changes and persists',await js("homeOrder.indexOf('next')>1&&JSON.stringify(state.home_card_order)===JSON.stringify(homeOrder)"));
   check('native drag preview cleans up',await js("!homeDrag&&!document.querySelector('.home-drag-preview')&&!document.body.classList.contains('home-sorting')"));
   await js("applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()");await js("homeSaveChain");

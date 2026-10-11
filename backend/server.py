@@ -39,7 +39,7 @@ def main():
             elif path=='/api/health':self.send(200,service.health.snapshot())
             elif path=='/api/preview':
                 jid=parse_qs(urlparse(self.path).query).get('id',[''])[0];rows=service.store.rows('SELECT result FROM jobs WHERE id=?',(jid,));self.send(200,json.loads(rows[0]['result']) if rows and rows[0]['result'] else {})
-            elif path in ('/app.js','/home.js','/health.js','/purchases.js','/shell.js','/theme.js','/style.css','/appearance.css'):
+            elif path in ('/app.js','/home.js','/health.js','/rail-order.js','/purchases.js','/shell.js','/theme.js','/style.css','/appearance.css'):
                 self.send(200,(BUNDLE/'static'/path[1:]).read_bytes(),'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
             else:self.send(404,dict(error='不存在'))
         def do_POST(self):
