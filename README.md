@@ -4,7 +4,7 @@ Windows 桌面应用：个人首页、抖音收藏入库、购买决策夹、个
 
 ## 下载 Windows 安装包
 
-### [点击下载 Workdesk 0.2.2 · Windows x64 安装包](https://github.com/Ph1lip26/workdesk/releases/download/v0.2.2/Workdesk-Setup-0.2.2-x64.exe)
+### [下载最新版：Workdesk 0.2.2 · Windows x64](https://github.com/Ph1lip26/workdesk/releases/download/v0.2.2/Workdesk-Setup-0.2.2-x64.exe)
 
 | 你要找的内容 | 入口 |
 |---|---|
@@ -16,7 +16,7 @@ Windows 桌面应用：个人首页、抖音收藏入库、购买决策夹、个
 
 **安装包在 Releases 的 Assets 中，不在源码文件夹。** 不要下载页面自动生成的 `Source code (zip)` 来安装。
 
-**版本区别：** **0.2.2** 包含个人健康、购买决策、一级导航长按换位和首页换位修复；以后 `main` 源码仍可能领先安装包，以对应 Release 说明为准。macOS 尚未发布或验证。
+**版本边界：0.2.2 已于 2026-10-12 发布。** 包含个人健康、购买决策、一级导航长按换位与首页换位修复。本机后续修订是否已进入安装包，以对应 Release 说明为准；macOS 尚未构建和验证。
 
 下载后运行 `.exe`，按提示安装。程序未签名，请核对来源与 SHA256。AI 入库需要你自己的 Codex 登录；使用知识库功能需要 Obsidian。软件不附带会员、API Key 或他人的数据。
 
