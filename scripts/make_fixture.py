@@ -20,6 +20,7 @@ db.execute('DELETE FROM purchases')
 from health import Health
 Health(db)
 db.execute('DELETE FROM weight_records')
+db.execute('DELETE FROM weight_imports')
 db.execute('DELETE FROM jobs');db.execute('DELETE FROM videos');db.execute('DELETE FROM folders');db.execute('DELETE FROM membership')
 for n in range(65):
     vid=str(int(first)+n);db.upsert(dict(id=vid,title=f'测试作品 {n+1}',author='测试作者'),favorite=True)

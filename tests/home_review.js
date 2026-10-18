@@ -8,7 +8,7 @@ async (page,output='build')=>{
  check('six source-backed cards, not a report',await page.locator('#home-cards>[data-home-card]').count()===6);
  check('four current subjects are source backed',await page.locator('.status-record').count()===4);
  check('no homepage submenu in DOM',await page.locator('#homenav').count()===0);
- check('homepage menu and toggle are absent',await page.locator('#modulepanel').isHidden()&&await page.locator('#navtoggle').isHidden());
+ check('homepage menu and toggle are absent',await page.locator('#modulepanel').isHidden());
  check('no date picker or task completion controls',await page.locator('[data-home-day],#homeview input[type=checkbox]').count()===0);
  check('only two key next records on homepage',await page.locator('#homeview .schedule-record').count()===2);
  check('uncertain original date is not scheduled as confirmed',await page.locator('.schedule-record').first().textContent().then(t=>t.includes('原 ')&&t.includes('日期待确认')));
@@ -51,7 +51,7 @@ async (page,output='build')=>{
   const r=await page.evaluate(()=>{const ws=document.querySelector('.workspace'),rail=document.querySelector('.module-rail').getBoundingClientRect();return{left:ws.getBoundingClientRect().left,right:ws.getBoundingClientRect().right,railRight:rail.right,overflow:document.documentElement.scrollWidth>innerWidth}});
   check(width+': content starts at primary rail',Math.abs(r.left-r.railRight)<1);
   check(width+': right edge fixed without overflow',Math.abs(r.right-width)<1&&!r.overflow);
-  check(width+': no secondary navigation',await page.locator('#modulepanel').isHidden()&&await page.locator('#navtoggle').isHidden());
+  check(width+': no secondary navigation',await page.locator('#modulepanel').isHidden());
   check(width+': all cards and handles fit',await page.evaluate(()=>[...document.querySelectorAll('#home-cards article')].every(c=>{const r=c.getBoundingClientRect(),h=c.querySelector('.tile-handle').getBoundingClientRect();return r.width>180&&h.right<=r.right&&h.left>=r.left})));
  }
  await page.screenshot({path:output+'/home-cards-phone.png'});
@@ -102,7 +102,7 @@ async (page,output='build')=>{
  await page.locator('[data-go-module=douyin]').click();await page.waitForTimeout(300);
  check('tile navigates to existing library',await page.evaluate(()=>currentModule==='douyin'&&document.querySelectorAll('.card').length===30));
  await page.evaluate(()=>{if(compactNavigation.matches)toggleNavigation()});await page.waitForTimeout(450);
- check('library keeps its secondary menu',await page.locator('#modulepanel').isVisible()&&await page.locator('#navtoggle').isVisible());
+ check('library keeps its secondary menu',await page.locator('#modulepanel').isVisible()&&await page.locator('#douyinmodule').isVisible());
  await page.evaluate(()=>{selection.add(state.videos[1].id);pageNumber=2;render()});const selected=await page.evaluate(()=>[...selection]);
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
  check('return to home hides submenu without losing library selection',await page.locator('#modulepanel').isHidden()&&await page.evaluate(()=>pageNumber===2&&selection.size===1));

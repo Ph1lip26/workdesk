@@ -12,11 +12,20 @@ const fixture={videos:[
 vm.runInContext('state='+JSON.stringify(fixture),context);
 const get=expr=>JSON.parse(JSON.stringify(vm.runInContext(expr,context)));
 let passed=0;const test=(name,fn)=>{fn();passed++;console.log('PASS '+name)};
+test('hidden windows do not poll even with active work',()=>{assert.equal(get('statePollDelay(state,true)'),0)});
+test('visible idle polling is slower but active jobs and login retain fast updates',()=>{
+ assert.equal(get('statePollDelay({jobs:[]},false)'),15000);
+ for(const state of [{jobs:[{status:'queued'}]},{jobs:[{status:'running'}]},{syncing:true},{authchecking:true},null]){
+  context.pollFixture=state;assert.equal(get('statePollDelay(pollFixture,false)'),3500);
+ }
+ assert.equal(get("statePollDelay({jobs:[{status:'needs_review'},{status:'failed'}]},false)"),15000);
+});
 test('saved order is not publication or numeric ID order',()=>assert.deepEqual(get('visible().map(v=>v.id)').slice(0,2),['1000000000000000000','1000000000000000004']));
 test('known publication newest first, unknown last',()=>{elements.sort.value='published';assert.deepEqual(get('visible().map(v=>v.published_at)'),[30,20,10,0]);elements.sort.value='collection'});
 test('raw or processed note marks saved',()=>{elements.status.value='done';assert.deepEqual(get('visible().map(v=>v.id)'),['1000000000000000000','1000000000000000004']);assert.equal(get('videoState(state.videos[1]).key'),'done')});
 test('unsaved excludes both raw and processed notes',()=>{elements.status.value='new';assert.deepEqual(get('visible().map(v=>v.id)'),['1000000000000000003','1000000000000000002'])});
 test('raw-only can distill but note and running item cannot enqueue',()=>{assert.equal(get('eligible(state.videos[1])'),true);assert.equal(get('eligible(state.videos[0])'),false);assert.equal(get('eligible(state.videos[2])'),false)});
+test('saved notes remain selectable for action ideas without becoming enqueue-eligible',()=>{assert.equal(get('selectable(state.videos[0])'),true);assert.equal(get('eligible(state.videos[0])'),false);assert.equal(get('selectable(state.videos[2])'),false)});
 test('folder source order, not main order',()=>{elements.status.value='all';vm.runInContext("folder='f'",context);assert.deepEqual(get('visible().map(v=>v.id)'),['1000000000000000004','1000000000000000000']);vm.runInContext("folder=''",context)});
 test('search composes with saved status and view',()=>{elements.search.value='甲';elements.status.value='done';assert.equal(get('visible().length'),1);elements.search.value='乙';assert.equal(get('visible().length'),1);elements.status.value='new';assert.equal(get('visible().length'),0);elements.search.value='';elements.status.value='all'});
 test('image posts can enqueue; local view separated',()=>{assert.equal(get('eligible(state.videos[4])'),true);vm.runInContext("view='local'",context);assert.equal(get('visible().length'),5)});

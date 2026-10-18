@@ -1,5 +1,6 @@
 """Isolated shutdown/security tests; no real Service, DB, browser or model work."""
 import json,re,socket,sys,threading,time,unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
@@ -10,6 +11,7 @@ class FakeService:
     def __init__(self):
         self.stop=threading.Event();self.sync_lock=threading.Lock();self.auth_lock=threading.Lock()
         self.busy=None;self.store=self;self.bridge=self;self.closed=0;self.health=self
+        self.ideas=SimpleNamespace(busy=False)
     def rows(self,query):
         return [{'id':'test'}] if self.busy and f"'{self.busy}'" in query else []
     def request(self,action,timeout):
@@ -39,6 +41,7 @@ class Tests(unittest.TestCase):
         except HTTPError as e:return e.code,json.loads(e.read())
     def tearDown(self):
         self.s.busy=None
+        self.s.ideas.busy=False
         if self.s.sync_lock.locked():self.s.sync_lock.release()
         if self.s.auth_lock.locked():self.s.auth_lock.release()
         if not self.s.stop.is_set():self.post()
@@ -56,6 +59,9 @@ class Tests(unittest.TestCase):
         self.s.sync_lock.acquire();self.assertEqual(self.post()[0],400)
     def test_login_protected(self):
         self.s.auth_lock.acquire();self.assertEqual(self.post()[0],400)
+    def test_action_generation_protected(self):
+        self.s.ideas.busy=True
+        self.assertEqual(self.post()[0],400);self.assertFalse(self.s.stop.is_set());self.assertEqual(self.s.closed,0)
     def test_invalid_token_rejected(self):self.assertEqual(self.post({'X-Workbench-Token':'bad'})[0],403)
     def test_foreign_origin_rejected(self):self.assertEqual(self.post({'Origin':'https://example.com'})[0],403)
     def test_idle_exit_closes_owned_bridge(self):

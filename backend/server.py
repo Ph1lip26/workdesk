@@ -1,8 +1,7 @@
 """Local-only UI and durable queue. No external inbound access or arbitrary file API."""
-import argparse, hmac, json, mimetypes, os, secrets, sys, threading
+import argparse, hmac, json, os, secrets, threading
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
-from pathlib import Path
-from urllib.parse import urlparse,parse_qs,quote
+from urllib.parse import urlparse,parse_qs
 from core import Service, ROOT, BUNDLE
 from branding import brand_png, brand_mark
 from appearance import read_mode
@@ -37,9 +36,10 @@ def main():
             elif path=='/api/home':self.send(200,service.home.snapshot())
             elif path=='/api/purchases':self.send(200,service.purchases.snapshot())
             elif path=='/api/health':self.send(200,service.health.snapshot())
+            elif path=='/api/actions':self.send(200,service.ideas.snapshot())
             elif path=='/api/preview':
                 jid=parse_qs(urlparse(self.path).query).get('id',[''])[0];rows=service.store.rows('SELECT result FROM jobs WHERE id=?',(jid,));self.send(200,json.loads(rows[0]['result']) if rows and rows[0]['result'] else {})
-            elif path in ('/app.js','/home.js','/health.js','/rail-order.js','/purchases.js','/shell.js','/theme.js','/style.css','/appearance.css'):
+            elif path in ('/app.js','/home.js','/health.js','/rail-order.js','/purchases.js','/shell.js','/theme.js','/action-ideas.js','/style.css','/appearance.css','/action-ideas.css'):
                 self.send(200,(BUNDLE/'static'/path[1:]).read_bytes(),'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
             else:self.send(404,dict(error='不存在'))
         def do_POST(self):
@@ -53,7 +53,7 @@ def main():
                 with command_lock:
                     if service.stop.is_set():raise ValueError('工作台正在退出，请重新打开后操作')
                     if name=='shutdown':
-                        if service.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running')") or service.sync_lock.locked() or service.auth_lock.locked():raise ValueError('有排队任务、处理任务、同步或登录检查，不能关闭')
+                        if service.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running')") or service.sync_lock.locked() or service.auth_lock.locked() or service.ideas.busy:raise ValueError('有排队任务、处理任务、行动建议、同步或登录检查，不能关闭')
                         # Close only the exact owned login worker, preserving its profile.
                         result=service.bridge.request('close',timeout=20)
                         if not result.get('ok'):raise RuntimeError('后台登录连接尚未关闭；未强制终止进程，请重试')

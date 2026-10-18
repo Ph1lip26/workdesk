@@ -1,11 +1,13 @@
 import datetime as dt
+import json
 import tempfile
 import unittest
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'backend'))
 from core import Store, home_order, HOME_CARDS
-from health import Health
+from health import Health, note_measurements
+from home import Homepage
 
 
 class HealthTests(unittest.TestCase):
@@ -20,6 +22,78 @@ class HealthTests(unittest.TestCase):
 
     def test_empty_without_seeded_personal_weight(self):
         self.assertEqual(self.health.snapshot(), dict(records=[]))
+
+    def bind_note(self, text):
+        root = Path(self.tmp.name)
+        vault = root/'vault'
+        note = vault/'处理文件/测试画像.md'
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(text, encoding='utf-8')
+        (root/'homepage.json').write_text(json.dumps(dict(schema=1, sources=[dict(id='profile',path='处理文件/测试画像.md')])), encoding='utf-8')
+        self.health = Health(self.store, Homepage(vault, root))
+        return note
+
+    def test_sync_profile_explicit_day_and_provenance_idempotently(self):
+        self.bind_note(f'| 身高 / 体重 | 180cm / 90.125kg（体重秤；用户{self.day}报告；上次2025-01-01：89kg） |')
+        self.assertEqual(self.health.snapshot()['records'], [])  # No import on reads.
+        self.assertEqual(self.health.sync()['added'], 1)
+        row = self.health.snapshot()['records'][0]
+        self.assertEqual((row['day'],row['grams'],row['source']), (self.day,90125,'处理文件/测试画像.md'))
+        self.assertEqual(self.health.sync()['added'], 0)
+        self.assertEqual(self.health.sync()['existing'], 1)
+
+    def test_sync_conflict_preserves_manual_row_and_revision(self):
+        self.bind_note(f'| {self.day} | 91公斤 |')
+        self.health.save(dict(day=self.day, value='90', unit='kg'))
+        before = self.health.snapshot()
+        report = self.health.sync()
+        self.assertEqual(report['conflicts'], [dict(day=self.day,incoming=[91000],existing=[90000])])
+        self.assertEqual(self.health.snapshot(), before)
+
+    def test_same_day_identical_manual_measurement_is_not_duplicated(self):
+        self.bind_note(f'| {self.day} | 180斤 |')
+        self.health.save(dict(day=self.day, value='90', unit='kg'))
+        self.assertEqual(self.health.sync()['existing'], 1)
+        self.assertEqual(self.health.snapshot()['records'][0]['source'], '')
+
+    def test_multiple_source_values_are_not_arbitrarily_selected(self):
+        self.bind_note(f'| {self.day} | 90kg |\n| {self.day} | 91kg |')
+        self.assertEqual(self.health.sync()['conflicts'][0]['incoming'], [90000,91000])
+        self.assertEqual(self.health.snapshot()['records'], [])
+
+    def test_refresh_does_not_resurrect_deleted_import(self):
+        self.bind_note(f'| {self.day} | 90kg |')
+        self.health.sync()
+        row = self.health.snapshot()['records'][0]
+        self.health.delete(dict(id=row['id'], revision=row['revision']))
+        self.assertEqual(self.health.sync()['added'], 0)
+        self.assertEqual(self.health.snapshot()['records'], [])
+
+    def test_concurrent_refresh_imports_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.bind_note(f'| {self.day} | 90kg |')
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(lambda _: self.health.sync(), range(2)))
+        self.assertEqual(sum(r['added'] for r in results), 1)
+
+    def test_no_date_inference_predictions_or_invalid_weights(self):
+        future=(dt.date.today()+dt.timedelta(days=1)).isoformat()
+        for body in ['| 体重 | 90kg |', f'| 体重 | 目标90kg（{self.day}） |',
+                     f'| {future} | 90kg |', '| 2025-02-29 | 90kg |',
+                     f'| {self.day} | 90.0001kg |', f'| {self.day} | 约90kg |',
+                     f'| {self.day} | 900kg |', f'| {self.day} | -90kg |',
+                     f'| {self.day} | 1e2kg |', f'| {self.day} | 1,090kg |', f'| {self.day} | ~90kg |']:
+            self.assertEqual(note_measurements('---\nupdated: '+self.day+'\n---\n'+body), [])
+
+    def test_missing_unbound_and_unsafe_source_fail_without_mutation(self):
+        with self.assertRaises(ValueError):self.health.sync()
+        note=self.bind_note('| 体重 | 90kg |')
+        with self.assertRaises(ValueError):self.health.sync()
+        note.unlink()
+        with self.assertRaises(ValueError):self.health.sync()
+        (Path(self.tmp.name)/'homepage.json').write_text(json.dumps(dict(schema=1,sources=[dict(id='profile',path='../outside.md')])),encoding='utf-8')
+        with self.assertRaises(ValueError):self.health.sync()
+        self.assertEqual(self.health.snapshot()['records'], [])
 
     def test_units_exact_restart_and_revision(self):
         ident = self.health.save(dict(day=self.day, value='180.25', unit='jin'))['id']

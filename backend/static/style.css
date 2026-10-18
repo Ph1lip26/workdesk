@@ -63,10 +63,6 @@ svg{width:20px;height:20px;flex:none;stroke:currentColor;stroke-width:1.8;fill:n
 #douyinmodule[aria-expanded=true] .rail-panel-glyph path{opacity:1;transform:translateX(0)}
 #douyinmodule[aria-expanded=true] .rail-panel-glyph{opacity:1;transform:translateX(0) scale(1)}
 #douyinmodule[aria-expanded=true] .rail-video-glyph{opacity:0;transform:translateX(-3px) scale(.96)}
-#navtoggle{perspective:100px}
-#navtoggle svg path:last-child{transform-box:view-box;transform-origin:15px 12px;transition:none!important}
-#navtoggle[aria-expanded=false] svg path:last-child{transform:translateX(1px) rotateY(180deg)}
-#navtoggle[aria-expanded=true]{color:#eef1f4;background:#ffffff08}
 #douyinmodule.active::before{transition:transform var(--nav-duration) var(--ease-out),opacity var(--nav-duration) var(--ease-out)}
 #douyinmodule[aria-expanded=false]::before{transform:scaleY(.6);opacity:.65}
 /* Text follows the panel over its whole journey, not a front-loaded flash.
@@ -96,7 +92,8 @@ body[data-navigation-expanded=false] :is(.panel-heading,.panel-nav,.panel-footer
 .folder-section{margin-top:26px}.nav-empty{padding:0 10px;font-size:12px;color:var(--muted)}
 .panel-collapsed{--workspace-offset:var(--rail-width);--nav-duration:260ms}
 .panel-collapsed .module-panel{transform:translateX(-100%);visibility:hidden;pointer-events:none;transition:transform var(--nav-duration) var(--ease-out),visibility 0s var(--nav-duration)}
-.workspace{position:relative;margin-top:var(--chrome-height);margin-left:var(--workspace-offset);width:calc(100% - var(--workspace-offset));height:calc(100dvh - var(--chrome-height));min-width:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable}
+.workspace{position:relative;margin-top:var(--chrome-height);margin-left:var(--rail-width);width:calc(100% - var(--rail-width));height:calc(100dvh - var(--chrome-height));min-width:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;contain:layout paint}
+.workspace-content{--content-offset:calc(var(--workspace-offset) - var(--rail-width));margin-left:var(--content-offset);width:calc(100% - var(--content-offset));height:100%}
 body:has(dialog:modal) .workspace{overflow-y:hidden;touch-action:none}
 /* Native scrolling, quiet chrome. Standards fallback; Chromium uses the rounded
    thumb below (non-auto scrollbar-color would override these pseudo-elements). */
@@ -150,7 +147,6 @@ input[type=checkbox]:disabled{opacity:.3;cursor:default}
 .cover input:checked{background:#eee;border-color:#fff}.cover input:disabled{display:none}
 .card:has(input:enabled) .cover{cursor:pointer}
 .cover-status{position:absolute;right:9px;top:9px;min-height:28px;display:inline-flex;align-items:center;gap:5px;pointer-events:none;padding:5px 9px;border:1px solid #ffffff40;border-radius:999px;background:#eeeeee;color:#171717;font-size:12px;line-height:1.3;font-weight:600;box-shadow:0 2px 8px #0005}
-.cover-status.done{background:#191919f5;color:#ededed;border-color:#ffffff80}
 .cover-status.pending,.cover-status.failed{background:#292929f5;color:#ededed;border-color:#ffffff60}
 .cover-status svg{width:14px;height:14px;stroke-width:1.8}
 .duration{position:absolute;bottom:9px;right:9px;background:#101010ed;color:#eee;border-radius:6px;padding:2px 6px;font-size:11px;pointer-events:none;font-variant-numeric:tabular-nums}
@@ -186,7 +182,20 @@ input[type=checkbox]:disabled{opacity:.3;cursor:default}
 #selected{font-variant-numeric:tabular-nums}.selectionbar .quiet{font-size:12px}
 dialog{background:#222222;color:var(--text);border:1px solid #484848;border-radius:var(--radius-sheet);padding:26px;max-height:88dvh;overflow:auto;overscroll-behavior:contain;width:min(520px,calc(100vw - 32px));box-shadow:0 24px 80px #0008}
 dialog::backdrop{background:#0009}
-dialog[open]{animation:sheet-enter .22s var(--ease-out)}
+.enqueue-confirm{width:min(520px,calc(100vw - 32px));padding:32px;background-color:var(--metal-fill);background-image:var(--metal-finish);border-color:var(--metal-edge);box-shadow:var(--metal-shadow),0 24px 80px #0006}
+.enqueue-confirm::backdrop{background:#0008;backdrop-filter:blur(5px)}
+.enqueue-confirm h2{margin:0;font-size:26px;font-weight:650;line-height:1.25;letter-spacing:-.035em}
+.enqueue-summary{margin:14px 0 24px;color:var(--ink-soft);font-size:16px;line-height:1.7}
+.enqueue-summary strong{font-weight:650;color:var(--text);font-variant-numeric:tabular-nums}
+.enqueue-rules{margin:0;padding:20px 0;border-top:1px solid var(--metal-edge);border-bottom:1px solid var(--metal-edge);display:grid;gap:16px}
+.enqueue-rules div{display:grid;grid-template-columns:90px minmax(0,1fr);gap:16px;font-size:14px;line-height:1.65}
+.enqueue-rules dt{color:var(--text);font-weight:600}.enqueue-rules dd{margin:0;color:var(--ink-soft)}
+.enqueue-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:26px}
+.enqueue-actions button{min-height:44px;padding:10px 20px;font-size:15px}
+.enqueue-confirm #enqueue-error{margin:18px 0 0;font-size:14px;line-height:1.65;color:var(--text)}
+@media(max-width:480px){.enqueue-confirm{padding:24px}.enqueue-rules div{grid-template-columns:1fr;gap:4px}.enqueue-actions button{flex:1}}
+dialog[open]{animation:sheet-enter .3s var(--ease-out)}
+dialog[open]::backdrop{animation:backdrop-enter .24s ease-out}
 .dialog-head{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:22px}
 .icon-close{display:grid;place-items:center;width:32px;height:32px;min-height:32px;padding:0;border-radius:10px;background:#ffffff08;color:#dedede}
 .icon-close svg,#closenav svg{width:17px;height:17px}
@@ -199,18 +208,20 @@ dialog[open]{animation:sheet-enter .22s var(--ease-out)}
 .tool-section textarea{width:100%;height:100px;resize:vertical;background:#292929;color:var(--text);border:1px solid #5b5b5b;border-radius:12px;padding:12px;margin:4px 0 10px;font-size:13px}
 .diagnostics{color:var(--muted);font-size:12px}.diagnostics summary{cursor:pointer}.diagnostics p{margin-top:12px;overflow-wrap:anywhere}
 .drawer{position:fixed;inset:var(--chrome-height) 0 0 auto;margin:0;width:min(440px,95vw);height:calc(100dvh - var(--chrome-height));max-height:calc(100dvh - var(--chrome-height));padding:26px;border-radius:20px 0 0 20px}
-dialog.drawer[open]{animation:drawer-enter .24s var(--ease-out)}
+dialog.drawer[open]{animation:drawer-enter .36s var(--ease-out)}
 .queue-control{display:flex;align-items:center;justify-content:space-between;padding:0 0 16px}
 .job{padding:18px 0;border-top:1px solid #3b3b3b}
 .badge{color:var(--muted);font-size:12px}.badge.done{color:#ededed}.badge.failed,.badge.pending{color:#bdbdbd}
-.badge.done::before{content:"✓";margin-right:6px}
+.badge.done{display:inline-flex;align-items:center;gap:5px}
+.badge.done>svg{width:14px;height:14px;flex:none}
 .job-title{font-size:14px;font-weight:600;margin:8px 0;line-height:1.6;overflow-wrap:anywhere}
 .job-message{color:var(--muted);font-size:13px;line-height:1.7;overflow-wrap:anywhere}
 .job-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px;font-size:13px}
 .job-actions button{min-height:32px;padding:6px 9px;font-size:12px}
 .job select{width:100%;margin-top:12px}.queue-empty{padding-top:26px;color:var(--muted);font-size:13px}
-.job-progress{height:3px;border-radius:3px;background:#414141;overflow:hidden;margin-top:12px}
-.job-progress::after{content:"";display:block;width:35%;height:100%;background:#dddddd;animation:progress 1.8s ease-in-out infinite}
+.job-progress{height:4px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:12px}
+.job-progress::after{content:"";display:block;width:34%;height:100%;border-radius:inherit;background:linear-gradient(90deg,transparent,var(--text) 48%,transparent);animation:progress 2.2s cubic-bezier(.4,0,.2,1) infinite}
+body:not([data-module=douyin]) #jobs .job-progress::after{animation-play-state:paused!important}
 .preview-sheet{width:min(840px,calc(100vw - 32px))}
 pre{font:500 13px/1.9 var(--font);white-space:pre-wrap;overflow-wrap:anywhere}
 #toast{position:fixed;z-index:30;left:50%;bottom:92px;transform:translateX(-50%);display:none;max-width:90vw;background:#303030;color:var(--text);border:1px solid #5a5a5a;border-radius:12px;padding:12px 16px;box-shadow:0 8px 25px #0005;font-size:13px;animation:toast-enter .18s var(--ease-out)}
@@ -220,11 +231,12 @@ pre{font:500 13px/1.9 var(--font);white-space:pre-wrap;overflow-wrap:anywhere}
 .is-loading{display:inline-flex;align-items:center;gap:8px}.is-loading::before{content:"";width:10px;height:10px;border:1.5px solid #999;border-top-color:#eee;border-radius:50%;animation:refresh-turn .8s linear infinite}
 @keyframes refresh-turn{to{transform:rotate(360deg)}}
 @keyframes reading-dots{0%,100%{opacity:.55}50%{opacity:1}}
-@keyframes progress{from{transform:translateX(-100%)}to{transform:translateX(400%)}}
+@keyframes progress{from{transform:translateX(-110%)}to{transform:translateX(310%)}}
 @keyframes selection-enter{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 @keyframes sheet-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes drawer-enter{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
 @keyframes toast-enter{from{opacity:0;transform:translate(-50%,5px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes backdrop-enter{from{opacity:0}to{opacity:1}}
 .window-chrome{display:none}.desktop-shell{--chrome-height:40px}
 /* The brand belongs to the full-height first rail, not a second title label. */
 .desktop-shell .module-rail{top:0;height:100dvh;padding-top:14px}
@@ -273,8 +285,9 @@ pre{font:500 13px/1.9 var(--font);white-space:pre-wrap;overflow-wrap:anywhere}
  *,*::before,*::after{animation:none!important;transition:none!important}
  button:active:not(:disabled),.card:hover .cover img{transform:none}
  .job-progress::after{width:50%}
- /* An explicit, reversible per-app opt-in affects navigation only, never the OS
+ /* Per-app opt-in covers navigation and processing feedback, never the OS
     or unrelated animations. System mode still honors reduced-motion. */
+ body[data-navigation-motion=on] .job-progress::after{width:34%;animation:progress 2.2s cubic-bezier(.4,0,.2,1) infinite!important}
  body[data-navigation-motion=on] .module-panel{transition:transform var(--nav-duration) var(--ease-out),visibility 0s var(--nav-visibility-delay)!important}
  body[data-navigation-motion=on] .window-chrome::before{transition:transform var(--nav-duration) var(--ease-out)!important}
  body[data-navigation-motion=on] :is(.panel-heading,.panel-nav,.panel-footer){transition:transform 340ms var(--ease-out),opacity 360ms cubic-bezier(.33,0,.2,1)!important}
@@ -285,7 +298,8 @@ pre{font:500 13px/1.9 var(--font);white-space:pre-wrap;overflow-wrap:anywhere}
  /* Glyph motion is managed by WAAPI, including local opt-in and interruption. */
  body[data-navigation-motion=on] #douyinmodule.active::before{transition:transform var(--nav-duration) var(--ease-out),opacity var(--nav-duration) var(--ease-out)!important}
 }
-body[data-navigation-motion=off] :is(.module-panel,.panel-heading,.panel-nav,.panel-footer,#navtoggle svg path:last-child,#douyinmodule svg),body[data-navigation-motion=off] .window-chrome::before,body[data-navigation-motion=off] #douyinmodule::before{transition:none!important}
+body[data-navigation-motion=off] :is(.module-panel,.panel-heading,.panel-nav,.panel-footer,#douyinmodule svg),body[data-navigation-motion=off] .window-chrome::before,body[data-navigation-motion=off] #douyinmodule::before{transition:none!important}
+body[data-navigation-motion=off] .job-progress::after{animation:none;transform:none;width:50%;opacity:.6}
 
 /* Master/detail decision memory: titles live in the shared navigation panel. */
 .workspace .purchase-view{width:min(100%,max(360px,calc(100vw - var(--rail-width) - var(--panel-width) - 16px)));container-type:inline-size;container-name:purchase-reading;max-width:1280px;margin:0 auto;padding:28px 34px 42px;outline:none}
@@ -515,7 +529,7 @@ dialog,.drawer{background:#26282cf7;border-color:#62656d;box-shadow:inset 0 1px 
 .home-source{color:#e0e2e6;font-weight:600}
 .tile-record-top,.status-record strong{color:var(--text)}
 .home-top-actions button{font-size:13px;font-weight:600;color:var(--muted)}
-.home-module-card:has(.module-entry:hover),.home-module-card:has(.module-entry:focus-visible){border-color:#b1b4bb;box-shadow:var(--metal-shadow)}
+
 /* Continuous corners when available; conventional rounded corners remain a
    complete fallback. The same scale covers real cards and drag previews. */
 @supports(corner-shape:squircle){.home-tile,.card,dialog,.drawer,.search-box,select,.rail-button,.panel-link{corner-shape:squircle}}
@@ -557,9 +571,10 @@ input[type=checkbox]:indeterminate::after{mask-image:url("data:image/svg+xml,%3C
 .health-section-heading h2{font-size:20px;font-weight:650}
 .health-view select,#weighteditor input,#weighteditor select{background:var(--control);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:inherit}
 .health-view .purchase-section{margin-bottom:20px}
-.weight-chart{display:block;width:100%;max-height:260px;color:var(--text);overflow:visible}
+/* Charts must override the generic SVG icon height and retain their viewBox ratio. */
+.weight-chart{display:block;width:100%;height:auto;color:var(--text);overflow:visible}
 .weight-chart polyline{fill:none;stroke:currentColor;stroke-width:2;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
-.weight-chart circle{fill:currentColor}.weight-chart text{fill:var(--muted);font-size:12px}.weight-gridline{stroke:var(--line);stroke-width:.5;opacity:.5}
+.weight-chart circle{fill:currentColor;stroke:none}.weight-chart text{fill:var(--muted);stroke:none;font-size:12px}.weight-gridline{stroke:var(--line);stroke-width:.5;opacity:.5}
 .weight-chart-mini{height:54px;margin-top:8px}
 .weight-row{display:flex;width:100%;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--line);border-radius:0;font-variant-numeric:tabular-nums;color:var(--text)}
 .weight-row>span:last-child{color:var(--muted);font-size:13px}
@@ -577,6 +592,7 @@ input[type=checkbox]:indeterminate::after{mask-image:url("data:image/svg+xml,%3C
 .weight-chart-interactive{position:relative;z-index:2;cursor:crosshair;border-radius:8px;touch-action:pan-y}
 .weight-chart-interactive:focus-visible{outline:2px solid var(--text);outline-offset:4px}
 .weight-chart-mini .weight-point-active{stroke:var(--metal-fill);stroke-width:2;r:10;vector-effect:non-scaling-stroke}
+.health-trend .weight-point-active{stroke:var(--metal-fill);stroke-width:2;r:5;vector-effect:non-scaling-stroke}
 .weight-hover-guide{stroke:currentColor;stroke-width:1;stroke-dasharray:2 4;opacity:.3;vector-effect:non-scaling-stroke;pointer-events:none}
 .weight-hover-guide[hidden]{display:none}
 .weight-point-tooltip{position:fixed;z-index:1000;pointer-events:none;padding:9px 12px;border:1px solid var(--metal-edge);border-radius:12px;background:var(--surface);color:var(--text);box-shadow:0 6px 22px #0002;font-size:13px;font-weight:650;line-height:1.5;font-variant-numeric:tabular-nums;white-space:nowrap;max-width:calc(100vw - 16px)}

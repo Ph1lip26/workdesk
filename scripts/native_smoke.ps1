@@ -1,4 +1,4 @@
-param([string]$Payload,[ValidateSet('all','purchases','shell','performance','health','readability','home-sort','rail-order')][string]$Scope='all')
+param([string]$Payload,[ValidateSet('all','purchases','shell','performance','health','health-chart','health-hover','health-sync','readability','home-sort','rail-order','queue','queue-style','motion-lifecycle')][string]$Scope='all')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $fixture=Join-Path $repo 'build\native-test'

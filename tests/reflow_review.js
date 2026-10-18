@@ -5,10 +5,10 @@ async(page)=>{
  await page.goto(page.url().split('#')[0]+'#douyin');await page.reload();await page.locator('.card').first().waitFor();
  await page.setViewportSize({width:1440,height:900});await page.emulateMedia({reducedMotion:'reduce'});
  await page.evaluate(async()=>{await api('navigation_motion',{mode:'on'});await refresh()});await page.waitForTimeout(800);
- if(await page.locator('#navtoggle').getAttribute('aria-expanded')==='false'){await page.locator('#navtoggle').click();await page.waitForTimeout(800)}
+ if(await page.locator('#douyinmodule').getAttribute('aria-expanded')==='false'){await page.locator('#douyinmodule').click();await page.waitForTimeout(800)}
  const probe=await page.evaluate(async()=>{
   const nodes=[...document.querySelectorAll('.card')],before=gridColumnCount(),frames=[],start=performance.now();
-  document.getElementById('navtoggle').click();
+  document.getElementById('douyinmodule').click();
   while(performance.now()-start<740){await new Promise(requestAnimationFrame);
    frames.push({t:performance.now()-start,moving:!!navigationReflow,right:document.querySelector('.workspace').getBoundingClientRect().right,
     rects:nodes.map(c=>{const r=c.getBoundingClientRect();return [r.left,r.top,r.width,r.height]}),
@@ -29,19 +29,19 @@ async(page)=>{
  check('glyph has no delayed-phase blank frame',probe.glyphMin>.98);
  check('scroll frame remains at right edge throughout',probe.edgeError<1);
  check('flow restoration adds no final layout jump',probe.endJump<2&&probe.clean);
- const reverse=await page.evaluate(async()=>{const wait=ms=>new Promise(r=>setTimeout(r,ms)),b=document.getElementById('navtoggle');b.click();await wait(170);const mid=!!navigationReflow,card=document.querySelector('.card'),before=card.getBoundingClientRect();b.click();await new Promise(requestAnimationFrame);const after=card.getBoundingClientRect();await wait(800);return {mid,jump:Math.abs(before.left-after.left)+Math.abs(before.width-after.width),clean:!navigationReflow&&!document.body.classList.contains('nav-moving'),closed:b.getAttribute('aria-expanded')==='false'}});
+ const reverse=await page.evaluate(async()=>{const wait=ms=>new Promise(r=>setTimeout(r,ms)),b=document.getElementById('douyinmodule');b.click();await wait(170);const mid=!!navigationReflow,card=document.querySelector('.card'),before=card.getBoundingClientRect();b.click();await new Promise(requestAnimationFrame);const after=card.getBoundingClientRect();await wait(800);return {mid,jump:Math.abs(before.left-after.left)+Math.abs(before.width-after.width),clean:!navigationReflow&&!document.body.classList.contains('nav-moving'),closed:b.getAttribute('aria-expanded')==='false'}});
  check('mid-flight reverse resumes current geometry',reverse.mid&&reverse.jump<15&&reverse.clean&&reverse.closed);
- await page.evaluate(async()=>{await api('navigation_motion',{mode:'off'});await refresh()});await page.locator('#navtoggle').click();
+ await page.evaluate(async()=>{await api('navigation_motion',{mode:'off'});await refresh()});await page.locator('#douyinmodule').click();
  check('off is immediate and restores real flow',await page.evaluate(()=>!navigationReflow&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')));
- await page.evaluate(async()=>{await api('navigation_motion',{mode:'on'});await refresh()});await page.locator('#navtoggle').click();await page.waitForTimeout(80);
+ await page.evaluate(async()=>{await api('navigation_motion',{mode:'on'});await refresh()});await page.locator('#douyinmodule').click();await page.waitForTimeout(80);
  await page.locator('#nextpage').click();await page.waitForTimeout(800);
  check('changing page during motion never leaves detached ghosts',await page.evaluate(()=>!navigationReflow&&document.querySelectorAll('.card').length===30&&document.querySelector('.card').dataset.id==='1000000000000000031'&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')));
- await page.locator('#prevpage').click();await page.locator('#navtoggle').click();await page.waitForTimeout(80);await page.setViewportSize({width:960,height:720});await page.waitForTimeout(800);
+ await page.locator('#prevpage').click();await page.locator('#douyinmodule').click();await page.waitForTimeout(80);await page.setViewportSize({width:960,height:720});await page.waitForTimeout(800);
  check('resize during motion restores responsive flow',await page.evaluate(()=>!navigationReflow&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')));
  check('resting cards do not overlap',await page.evaluate(()=>{const r=[...document.querySelectorAll('.card')].map(c=>c.getBoundingClientRect());return r.every((a,i)=>r.every((b,j)=>i===j||a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))}));
  await page.evaluate(()=>{toggleNavigation();navigationAnimations[0]?.cancel()});await page.waitForTimeout(800);
  check('external effect interruption also restores flow',await page.evaluate(()=>!navigationReflow&&!document.body.classList.contains('nav-moving')&&navigationAnimations.length===0&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')));
- await page.locator('#navtoggle').click();await page.waitForTimeout(800);
+ await page.locator('#douyinmodule').click();await page.waitForTimeout(800);
  check('navigation remains usable after external interruption',await page.evaluate(()=>!navigationReflow&&!document.body.classList.contains('nav-moving')&&document.querySelector('.workspace').getBoundingClientRect().right===innerWidth));
  await page.evaluate(async()=>{await api('navigation_motion',{mode:'system'});await refresh()});await page.emulateMedia({reducedMotion:'no-preference'});
  check('no browser/CSP errors',errors.length===0);return {ok:true,checks:checks.length,probe,reverse,errors};

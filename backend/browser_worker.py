@@ -2,16 +2,10 @@
 import json, os, re, sys, time, traceback
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from storage import atomic_json as write_json
 
 def atomic_json(path, value):
-    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix('.tmp'); tmp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
-    # Windows readers briefly hold destination handles without delete sharing.
-    for attempt in range(30):
-        try:os.replace(tmp,path);return
-        except PermissionError:
-            if attempt==29:raise
-            time.sleep(.05)
+    write_json(path,value,indent=None) # Preserve the browser bridge's compact format.
 
 def walk(value):
     if isinstance(value, dict):

@@ -11,7 +11,7 @@ async (page) => {
   await page.setViewportSize({width,height:920});await page.waitForTimeout(450);
   const frames=await page.evaluate(async()=>{
    selectModule('home',{animate:false});await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
-   selectModule('douyin',{animate:false});if($('navtoggle').getAttribute('aria-expanded')!=='true')toggleNavigation();
+   selectModule('douyin',{animate:false});if($('douyinmodule').getAttribute('aria-expanded')!=='true')toggleNavigation();
    const start=performance.now(),samples=[];
    do{await new Promise(requestAnimationFrame);samples.push({t:performance.now()-start,title:+getComputedStyle(document.querySelector('.panel-heading')).opacity,menu:+getComputedStyle(document.querySelector('.panel-nav')).opacity,visibility:getComputedStyle(document.querySelector('.panel-link>span')).visibility})}while(performance.now()-start<480);
    return samples;

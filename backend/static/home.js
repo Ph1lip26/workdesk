@@ -18,6 +18,7 @@ function selectModule(name,{animate=true}={}){
  finishHomeDrag(true);clearHomeLandingGhosts();
  const ws=document.querySelector('.workspace');moduleScroll[currentModule]=ws.scrollTop;
  stopNavigationAnimation();if(['purchases','health'].includes(name)&&compactNavigation.matches)compactPanelOpen=true;
+ if(animate&&name!==currentModule&&name!=='home'){panelCollapsed=false;document.body.classList.remove('panel-collapsed');compactPanelOpen=compactNavigation.matches}
  currentModule=name;document.body.dataset.module=name;
  for(const [key,m] of Object.entries(moduleRegistry)){
   $(m.view).hidden=key!==name;if(m.nav)$(m.nav).hidden=key!==name;
@@ -35,7 +36,7 @@ function selectModule(name,{animate=true}={}){
  if(name==='purchases'&&typeof refreshPurchases==='function')refreshPurchases();
  if(name==='health'&&typeof refreshHealth==='function')refreshHealth();
  if(animate)animateModuleGlyph(name);
- if(animate&&navigationMotionEnabled())$(moduleRegistry[name].view).animate([{transform:'translateY(3px)'},{transform:'translateY(0)'}],{duration:280,easing:'cubic-bezier(.22,1,.36,1)'});
+ if(animate)animateModuleView($(moduleRegistry[name].view));else clearModuleViewAnimations();
 }
 function homeTile(id,title,body,footer='',wide=false){
  const moduleCard=['douyin','materials','health','purchases'].includes(id);
@@ -81,7 +82,7 @@ function renderHomepageSummary(){
  if(homeDrag||homeLandingGhosts.size)return;
  if(typeof renderPurchaseHome==='function')renderPurchaseHome();
  if(typeof renderHealthHome==='function')renderHealthHome();
- const pt=$('home-purchases-summary');if(pt){const records=typeof purchaseState!=='undefined'?purchaseState?.records:[];const n=records?.filter(r=>!['decided','shelved'].includes(r.status)).length;pt.innerHTML='<div class="collection-total"><strong>'+(n??'—')+'</strong><span>项待决定</span></div><p class="tile-note">'+esc(records?.[0]?.title||'保存需求与上次结论')+'</p>'}
+ const pt=$('home-purchases-summary');if(pt){const records=typeof purchaseState!=='undefined'?purchaseState?.records:[];const n=records?.filter(r=>!['decided','shelved'].includes(r.status)).length;const html='<div class="collection-total"><strong>'+(n??'—')+'</strong><span>项待决定</span></div><p class="tile-note">'+esc(records?.[0]?.title||'保存需求与上次结论')+'</p>';if(pt.dataset.content!==html){pt.innerHTML=html;pt.dataset.content=html}}
  if(homeDrag)return;
  const target=$('home-module-summary');if(!target)return;if(!state){for(const el of [target,$('home-material-summary')])if(el){el.innerHTML='<p class="tile-note">数据尚未连接，不显示推测数值。</p>';delete el.dataset.content}return}
  const favorites=state.videos.filter(v=>v.favorite),done=favorites.filter(saved).length;
@@ -130,16 +131,18 @@ function announceHomeLayout(text){if($('home-layout-status'))$('home-layout-stat
 function applyHomeOrder(order,animate=false){
  if(!validHomeOrder(order))return;
  const grid=$('home-cards');homeOrder=[...order];if(!grid)return;
- const cards=[...grid.children],before=new Map(cards.map(c=>[c,c.getBoundingClientRect()])),focused=document.activeElement;
+ const cards=[...grid.children],moving=animate&&navigationMotionEnabled(),before=moving?new Map(cards.map(c=>[c,c.getBoundingClientRect()])):null,focused=document.activeElement;
  homeFlipAnimations.forEach((a,c)=>{a.cancel();c.style.willChange=''});homeFlipAnimations.clear();
  const statusCard=cards.find(c=>c.dataset.homeCard==='status');
  statusCard?.classList.remove('home-tile-wide');statusCard?.classList.add('home-tile-compact');
  // Move only displaced nodes; unchanged cards retain focus, scroll and layers.
  for(const [i,id] of order.entries()){const card=cards.find(c=>c.dataset.homeCard===id);if(card&&grid.children[i]!==card)grid.insertBefore(card,grid.children[i]||null)}
  if(grid.contains(focused))focused.focus({preventScroll:true});
- if(animate&&navigationMotionEnabled())for(const card of cards){
+ // Read all endpoints before layer promotion/animation writes.
+ const ends=moving?new Map(cards.map(c=>[c,c.getBoundingClientRect()])):null;
+ if(ends)for(const card of cards){
   if(card===homeDrag?.card&&!homeDrag.keyboard)continue;
-  const old=before.get(card),now=card.getBoundingClientRect(),dx=old.left-now.left,dy=old.top-now.top;
+  const old=before.get(card),now=ends.get(card),dx=old.left-now.left,dy=old.top-now.top;
   if(Math.abs(dx)+Math.abs(dy)<1)continue;
   card.style.willChange='transform';
   const a=card.animate([{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'translate(0px,0px)'}],{duration:300,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
@@ -179,12 +182,12 @@ function activateHomeDrag(d){
 }
 function homeDragFrame(){
  const d=homeDrag;if(!d?.active||d.keyboard)return;
- if(d.lastX===d.x&&d.lastY===d.y){d.frame=requestAnimationFrame(homeDragFrame);return}
+ d.frame=0;
+ if(d.lastX===d.x&&d.lastY===d.y)return;
  d.lastX=d.x;d.lastY=d.y;
  d.ghost.style.transform='translate('+(d.x-d.offsetX)+'px,'+(d.y-d.offsetY)+'px) scale(1.012)';
  const index=d.slots.findIndex(r=>d.x>=r.left&&d.x<=r.right&&d.y>=r.top&&d.y<=r.bottom);
  if(index>=0&&homeOrder[index]!==d.id)moveHomeCard(d.id,homeOrder[index]);
- d.frame=requestAnimationFrame(homeDragFrame);
 }
 function finishHomeDrag(cancel=false){
  const d=homeDrag;if(!d)return;
@@ -213,8 +216,9 @@ document.addEventListener('pointerdown',e=>{
 document.addEventListener('pointermove',e=>{
  const d=homeDrag;if(!d||d.keyboard||d.pointerId!==e.pointerId)return;
  d.x=e.clientX;d.y=e.clientY;if(!d.active&&Math.hypot(d.x-d.startX,d.y-d.startY)>6)activateHomeDrag(d);
+ if(d.active&&!d.frame)d.frame=requestAnimationFrame(homeDragFrame);
 });
-document.addEventListener('pointerup',e=>{if(homeDrag&&!homeDrag.keyboard&&homeDrag.pointerId===e.pointerId)finishHomeDrag()});
+document.addEventListener('pointerup',e=>{if(homeDrag&&!homeDrag.keyboard&&homeDrag.pointerId===e.pointerId){if(homeDrag.active){homeDrag.x=e.clientX;homeDrag.y=e.clientY;cancelAnimationFrame(homeDrag.frame);homeDragFrame()}finishHomeDrag()}});
 document.addEventListener('pointercancel',e=>{if(homeDrag?.pointerId===e.pointerId)finishHomeDrag(true)});
 document.addEventListener('lostpointercapture',e=>{if(homeDrag?.pointerId===e.pointerId)finishHomeDrag(true)});
 document.addEventListener('keydown',e=>{
@@ -229,7 +233,7 @@ document.addEventListener('keydown',e=>{
  }
 });
 window.addEventListener('blur',()=>finishHomeDrag(true));window.addEventListener('resize',()=>{finishHomeDrag(true);applyHomeOrder(homeOrder)});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)finishHomeDrag(true)});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)finishHomeDrag(true);else if(currentModule==='home')refreshHomepage()});
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button,a');if(!b){
   const card=e.target.closest('.home-module-card');if(card&&e.target.closest('.tile-body')&&!window.getSelection()?.toString()){selectModule(card.dataset.moduleRoute);if(card.dataset.homeCard==='materials')selectSource('local');else if(card.dataset.homeCard==='douyin')selectSource('favorites')}
@@ -251,4 +255,4 @@ window.addEventListener('hashchange',()=>{const name=location.hash.slice(1);if(n
 const initialQueueRoute=location.hash==='#queue';
 selectModule(location.hash==='#library'||initialQueueRoute?'douyin':moduleRegistry[location.hash.slice(1)]?location.hash.slice(1):'home',{animate:false});
 if(initialQueueRoute)selectDouyinPage('queue',{focus:false});
-setInterval(()=>{if(currentModule==='home')refreshHomepage()},15000);
+setInterval(()=>{if(!document.hidden&&currentModule==='home')refreshHomepage()},15000);

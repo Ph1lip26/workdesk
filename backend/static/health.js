@@ -1,6 +1,14 @@
 /* Private manual weight log. Charts use actual dates and points, not predictions. */
 let healthState=null,healthBusy=false,weightEditing=null,weightSaving=false,weightDirty=false,weightDeleteArmed=false;
 let healthUnit='kg',healthRange='all',weightHoverChart=null,weightHoverIndex=-1;
+let healthSyncResult=null;
+let healthRefreshPromise=null;
+const weightOrigin=r=>r?.source?'知识库记录'+(r.revision>1?'（已手动修改）':''):'手动测量';
+function healthSyncNotice(){
+ if(!healthSyncResult)return '';
+ const s=healthSyncResult,kg=values=>values.length?values.map(v=>v/1000+'公斤').join('、'):'无';
+ return '<aside class="notice" role="status"><div><strong>知识库同步：新增 '+s.added+' 条，已存在或已处理 '+s.existing+' 条'+(s.conflicts.length?'，'+s.conflicts.length+' 天有冲突':'')+'</strong><p class="tile-evidence">来源：'+esc(s.source)+'</p>'+s.conflicts.map(c=>'<p class="tile-note">'+esc(c.day)+'：知识库 '+esc(kg(c.incoming))+'；工作台 '+esc(kg(c.existing))+'。未覆盖，请核对来源后手动选择。</p>').join('')+'</div></aside>';
+}
 try{if(localStorage.getItem('weight-unit')==='jin')healthUnit='jin'}catch{}
 const weightNumber=r=>Number((r.grams/(healthUnit==='jin'?500:1000)).toFixed(3));
 const weightUnitLabel=()=>healthUnit==='jin'?'斤':'公斤';
@@ -19,8 +27,8 @@ function weightChart(records,mini=false){
  const y=v=>top+(hi-v)/(hi-lo)*(height-top-bottom);
  const path=values.map((v,i)=>x(times[i]).toFixed(2)+','+y(v).toFixed(2)).join(' ');
  const axis=mini?'':[0,.5,1].map(p=>{const v=lo+(hi-lo)*p,cy=y(v);return '<line class="weight-gridline" x1="'+left+'" x2="'+(width-right)+'" y1="'+cy+'" y2="'+cy+'"/><text x="'+(left-9)+'" y="'+(cy+4)+'" text-anchor="end">'+v.toFixed(1)+'</text>'}).join('')+'<text x="'+left+'" y="'+(height-5)+'">'+points[0].day+'</text><text x="'+(width-right)+'" y="'+(height-5)+'" text-anchor="end">'+points.at(-1).day+'</text>';
- const chart='<svg class="weight-chart '+(mini?'weight-chart-mini':'')+'" viewBox="0 0 '+width+' '+height+'" '+(mini?'aria-hidden="true"':'role="img" aria-label="体重记录曲线，共'+points.length+'个测量日，单位'+weightUnitLabel()+'"')+'>'+axis+(points.length>1?'<polyline points="'+path+'"/>':'')+(mini?'<line class="weight-hover-guide" y1="8" y2="62" hidden/>':'')+values.map((v,i)=>'<circle cx="'+x(times[i])+'" cy="'+y(v)+'" r="'+(mini?2:3)+'" data-day="'+points[i].day+'" data-grams="'+points[i].grams+'">'+(mini?'':'<title>'+points[i].day+' · '+v+' '+weightUnitLabel()+'</title>')+'</circle>').join('')+'</svg>';
- return mini?'<div class="weight-chart-interactive" tabindex="0" role="group" aria-label="体重趋势。悬停或轻点查看记录；左右方向键切换，Home和End查看首末点，Escape关闭。">'+chart+'</div>':chart;
+ const chart='<svg class="weight-chart '+(mini?'weight-chart-mini':'')+'" viewBox="0 0 '+width+' '+height+'" '+(mini?'aria-hidden="true"':'role="img" aria-label="体重记录曲线，共'+points.length+'个测量日，单位'+weightUnitLabel()+'"')+'>'+axis+(points.length>1?'<polyline points="'+path+'"/>':'')+'<line class="weight-hover-guide" y1="'+(mini?8:top)+'" y2="'+(height-bottom)+'" hidden/>'+values.map((v,i)=>'<circle cx="'+x(times[i])+'" cy="'+y(v)+'" r="'+(mini?2:3)+'" data-day="'+points[i].day+'" data-grams="'+points[i].grams+'"/>').join('')+'</svg>';
+ return '<div class="weight-chart-interactive" tabindex="0" role="group" aria-label="体重趋势。悬停或轻点查看测量日期与体重；左右方向键切换，Home和End查看首末点，Escape关闭。">'+chart+'</div>';
 }
 function renderHealthHome(){
  if(typeof homeDrag!=='undefined'&&homeDrag)return;
@@ -28,18 +36,23 @@ function renderHealthHome(){
  if(weightHoverChart&&el.contains(weightHoverChart))closeWeightTooltip();
  if(!healthState){el.innerHTML='<p class="tile-note">正在读取体重记录…</p>';return}
  const rows=healthState.records,last=rows.at(-1);
- el.innerHTML=last?'<div class="collection-total"><strong>'+weightNumber(last)+'</strong><span>'+weightUnitLabel()+'</span></div><p class="tile-evidence">'+esc(last.day)+' · 手动测量</p>'+weightChart(rows.slice(-30),true):'<p class="tile-note">还没有体重记录</p><button class="home-source quiet" data-health-add>＋ 记录一次体重</button>';
+ el.innerHTML=last?'<div class="collection-total"><strong>'+weightNumber(last)+'</strong><span>'+weightUnitLabel()+'</span></div><p class="tile-evidence">'+esc(last.day)+' · '+weightOrigin(last)+'</p>'+weightChart(rows.slice(-30),true):'<p class="tile-note">还没有体重记录</p><button class="home-source quiet" data-health-add>＋ 记录一次体重</button>';
 }
 function renderHealth(){
  const el=$('healthview');if(!el)return;
+ if(weightHoverChart&&el.contains(weightHoverChart))closeWeightTooltip();
  const records=healthState?.records||[],last=records.at(-1),today=Date.parse(localDate()+'T00:00:00Z');
  const visible=healthRange==='all'?records:records.filter(r=>Date.parse(r.day+'T00:00:00Z')>=today-(Number(healthRange)-1)*86400000);
- el.innerHTML='<header class="purchase-header"><div><p class="view-context">体重记录</p><h1>个人健康</h1></div><div class="purchase-header-actions"><button id="health-refresh" class="quiet">刷新</button><button data-health-add class="primary">＋ 记录体重</button></div></header><div class="health-summary purchase-section"><div><span class="muted">最新测量</span><div class="weight-current">'+(last?weightNumber(last):'—')+'<span>'+weightUnitLabel()+'</span></div><p class="tile-evidence">'+(last?esc(last.day)+' · 手动测量':'尚未记录，不显示推测数值')+'</p></div><div class="health-unit-control"><label for="health-unit">显示单位</label><select id="health-unit"><option value="kg" '+(healthUnit==='kg'?'selected':'')+'>公斤</option><option value="jin" '+(healthUnit==='jin'?'selected':'')+'>斤</option></select></div></div><section class="purchase-section health-trend"><div class="health-section-heading"><h2>体重趋势</h2><label><span class="sr-only">趋势时间范围</span><select id="health-range">'+[['30','近30天'],['90','近90天'],['all','全部记录']].map(([v,t])=>'<option value="'+v+'" '+(healthRange===v?'selected':'')+'>'+t+'</option>').join('')+'</select></label></div>'+weightChart(visible)+'<p class="tile-evidence">按实际测量日期连接；同一天多次测量取最后录入的一次。空白日不补数，单次涨跌不判定为增脂或减脂。</p></section><section class="purchase-section"><div class="health-section-heading"><h2>历史记录</h2><span class="muted">'+records.length+'条 · 点击修改</span></div><div class="weight-history">'+(records.length?[...records].reverse().map(r=>'<button class="weight-row quiet" data-weight-edit="'+esc(r.id)+'"><span>'+esc(r.day)+'</span><strong>'+weightNumber(r)+' '+weightUnitLabel()+'</strong><span>修改</span></button>').join(''):'<p class="tile-note">称完后手动记录一次，从第一条真实数据开始。</p>')+'</div></section><p class="tile-evidence">数据仅保存在本机。这里只记录体重，不做健康评分或诊断。</p>';
+ el.innerHTML='<header class="purchase-header"><div><p class="view-context">体重记录</p><h1>个人健康</h1></div><div class="purchase-header-actions"><button id="health-refresh" class="quiet">刷新</button><button data-health-add class="primary">＋ 记录体重</button></div></header>'+healthSyncNotice()+'<div class="health-summary purchase-section"><div><span class="muted">最新测量</span><div class="weight-current">'+(last?weightNumber(last):'—')+'<span>'+weightUnitLabel()+'</span></div><p class="tile-evidence">'+(last?esc(last.day)+' · '+weightOrigin(last):'尚未记录，不显示推测数值')+'</p></div><div class="health-unit-control"><label for="health-unit">显示单位</label><select id="health-unit"><option value="kg" '+(healthUnit==='kg'?'selected':'')+'>公斤</option><option value="jin" '+(healthUnit==='jin'?'selected':'')+'>斤</option></select></div></div><section class="purchase-section health-trend"><div class="health-section-heading"><h2>体重趋势</h2><label><span class="sr-only">趋势时间范围</span><select id="health-range">'+[['30','近30天'],['90','近90天'],['all','全部记录']].map(([v,t])=>'<option value="'+v+'" '+(healthRange===v?'selected':'')+'>'+t+'</option>').join('')+'</select></label></div>'+weightChart(visible)+'<p class="tile-evidence">按实际测量日期连接；同一天多次测量取最后录入的一次。空白日不补数，单次涨跌不判定为增脂或减脂。</p></section><section class="purchase-section"><div class="health-section-heading"><h2>历史记录</h2><span class="muted">'+records.length+'条 · 点击修改</span></div><div class="weight-history">'+(records.length?[...records].reverse().map(r=>'<button class="weight-row quiet" data-weight-edit="'+esc(r.id)+'"><span>'+esc(r.day)+'</span><strong>'+weightNumber(r)+' '+weightUnitLabel()+'</strong><span>'+weightOrigin(r)+' · 修改</span></button>').join(''):'<p class="tile-note">称完后手动记录一次，从第一条真实数据开始。</p>')+'</div></section><p class="tile-evidence">数据仅保存在本机。这里只记录体重，不做健康评分或诊断。</p>';
 }
-async function refreshHealth(){
- if(healthBusy)return false;healthBusy=true;
- try{healthState=await api('health');renderHealth();renderHealthHome();return true}
- catch(e){toast('体重记录读取失败：'+e.message);return false}finally{healthBusy=false}
+async function refreshHealth({sync=false}={}){
+ if(healthBusy)return sync?healthRefreshPromise.then(()=>refreshHealth({sync:true})):healthRefreshPromise;
+ healthBusy=true;
+ healthRefreshPromise=(async()=>{
+  try{if(sync)healthSyncResult=await api('health_sync',{});healthState=await api('health');renderHealth();renderHealthHome();return true}
+  catch(e){toast('体重记录读取失败：'+e.message);return false}finally{healthBusy=false}
+ })();
+ return healthRefreshPromise;
 }
 function openWeightEditor(id=''){
  weightEditing=id?healthState?.records.find(r=>r.id===id):null;if(id&&!weightEditing)return;
@@ -65,7 +78,7 @@ $('weight-unit').onchange=()=>{
 };
 async function mutateWeight(action,payload){
  if(weightSaving)return;weightSaving=true;for(const id of ['weight-save','weight-delete','weight-close'])$(id).disabled=true;
- try{await api(action,payload);weightDirty=false;$('weighteditor').close();$('weight-close').textContent='关闭';await refreshHealth();toast(action==='health_save'?'体重已保存':'记录已删除')}
+ try{await api(action,payload);healthSyncResult=null;weightDirty=false;$('weighteditor').close();$('weight-close').textContent='关闭';await refreshHealth();toast(action==='health_save'?'体重已保存':'记录已删除')}
  catch(e){$('weight-error').textContent=e.message;$('weight-error').hidden=false}
  finally{weightSaving=false;for(const id of ['weight-save','weight-delete','weight-close'])$(id).disabled=false}
 }
@@ -78,7 +91,7 @@ $('weight-delete').onclick=()=>{
 document.addEventListener('click',e=>{
  const add=e.target.closest('[data-health-add]');if(add){e.preventDefault();e.stopPropagation();openWeightEditor();return}
  const edit=e.target.closest('[data-weight-edit]');if(edit)openWeightEditor(edit.dataset.weightEdit);
- if(e.target.closest('#health-refresh'))refreshWithFeedback('health-refresh',refreshHealth);
+ if(e.target.closest('#health-refresh'))refreshWithFeedback('health-refresh',()=>refreshHealth({sync:true}));
 });
 document.addEventListener('change',e=>{
  if(e.target.id==='health-unit'){healthUnit=e.target.value;try{localStorage.setItem('weight-unit',healthUnit)}catch{}renderHealth();renderHealthHome()}
@@ -108,7 +121,8 @@ function showWeightPoint(chart,index){
  const svg=chart.querySelector('svg'),at=svg.createSVGPoint();at.x=Number(point.getAttribute('cx'));at.y=Number(point.getAttribute('cy'));
  const anchor=at.matrixTransform(svg.getScreenCTM()),rect=tip.getBoundingClientRect();
  tip.style.left=Math.max(8,Math.min(innerWidth-rect.width-8,anchor.x-rect.width/2))+'px';
- tip.style.top=(anchor.y-rect.height-12>=8?anchor.y-rect.height-12:Math.min(innerHeight-rect.height-8,anchor.y+14))+'px';
+ const preferredTop=anchor.y-rect.height-12>=8?anchor.y-rect.height-12:anchor.y+14;
+ tip.style.top=Math.max(8,Math.min(innerHeight-rect.height-8,preferredTop))+'px';
 }
 function weightPointAt(chart,event){
  const svg=chart.querySelector('svg'),at=svg.createSVGPoint();at.x=event.clientX;at.y=event.clientY;

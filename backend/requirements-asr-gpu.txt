@@ -1,0 +1,4 @@
+# Optional Windows CUDA 12 runtime; install into a private target, not the bundle.
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.10.2.21
+nvidia-cuda-runtime-cu12==12.4.127

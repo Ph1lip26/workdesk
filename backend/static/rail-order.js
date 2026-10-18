@@ -1,21 +1,22 @@
-/* Local module order. Logo, secondary-toggle and settings never move. */
+/* Local module order. Logo and settings never move. */
 const RAIL_IDS=['home','douyin','purchases','health'];
 let railOrder=[...RAIL_IDS],railSavedOrder=[...RAIL_IDS],railDrag=null,railLanding=null,railSaving=false,railConsumedClick=false;
 const railMoves=new Map();
 const railButton=name=>$(moduleRegistry[name].button);
 const validRailOrder=order=>Array.isArray(order)&&order.length===RAIL_IDS.length&&new Set(order).size===order.length&&order.every(id=>RAIL_IDS.includes(id));
-function applyRailOrder(order,animate=false){
+function applyRailOrder(order,animate=false,skip=null){
  if(!validRailOrder(order))return;
- const before=new Map(RAIL_IDS.map(id=>[railButton(id),railButton(id).getBoundingClientRect()]));
+ const moving=animate&&navigationMotionEnabled(),before=moving?new Map(RAIL_IDS.map(id=>[railButton(id),railButton(id).getBoundingClientRect()])):null;
  railMoves.forEach(a=>a.cancel());railMoves.clear();railOrder=[...order];
  const stack=$('modules');for(const [i,id] of order.entries()){
   const b=railButton(id);
   if(railDrag?.active)b.style.order=String(i);
   else{b.style.order='';if(stack.children[i]!==b)stack.insertBefore(b,stack.children[i]||null)}
  }
- if(animate&&navigationMotionEnabled())for(const [b,r] of before){
-  if(b===railDrag?.button)continue;
-  const dy=r.top-b.getBoundingClientRect().top;if(Math.abs(dy)<1)continue;
+ const ends=moving?new Map(RAIL_IDS.map(id=>{const b=railButton(id);return [b,b.getBoundingClientRect()]})):null;
+ if(ends)for(const [b,r] of before){
+  if(b===railDrag?.button||b===skip)continue;
+  const dy=r.top-ends.get(b).top;if(Math.abs(dy)<1)continue;
   const a=b.animate([{transform:`translateY(${dy}px)`},{transform:'translateY(0px)'}],{duration:260,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});railMoves.set(b,a);
   a.finished.then(()=>{if(railMoves.get(b)===a){railMoves.delete(b);a.cancel()}}).catch(()=>{});
  }
@@ -45,9 +46,9 @@ function moveRailDrag(){
 async function finishRailDrag(cancel=false){
  const d=railDrag;if(!d)return;railDrag=null;clearTimeout(d.timer);cancelAnimationFrame(d.frame);
  if($('modules').hasPointerCapture(d.pointerId))$('modules').releasePointerCapture(d.pointerId);
- if(d.active)applyRailOrder(cancel?d.before:railOrder);
+ // Commit flex order to DOM without snapping neighbors out of an in-flight swap.
+ if(d.active)applyRailOrder(cancel?d.before:railOrder,true,d.button);
  document.body.classList.remove('rail-sorting');d.button.removeAttribute('aria-grabbed');
- if(cancel)applyRailOrder(d.before,true);
  if(d.ghost){
   const g=d.ghost,r=d.button.getBoundingClientRect();
   const done=()=>{g.remove();d.button.classList.remove('rail-drag-placeholder');railLanding=null;d.button.focus({preventScroll:true})};
@@ -68,12 +69,12 @@ $('modules').addEventListener('pointerdown',e=>{
  finishRailDrag(true);const id=RAIL_IDS.find(id=>railButton(id)===button);
  e.preventDefault();button.focus({preventScroll:true});railConsumedClick=true;$('modules').setPointerCapture(e.pointerId);
  const d=railDrag={id,button,pointerId:e.pointerId,before:[...railOrder],x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,active:false};
- d.timer=setTimeout(()=>activateRailDrag(d),450);
+ d.timer=setTimeout(()=>activateRailDrag(d),250);
 });
 document.addEventListener('pointermove',e=>{
  const d=railDrag;if(!d||d.pointerId!==e.pointerId)return;d.x=e.clientX;d.y=e.clientY;
  if(!d.active){if(Math.hypot(d.x-d.sx,d.y-d.sy)>8)finishRailDrag(true);return}
- e.preventDefault();cancelAnimationFrame(d.frame);d.frame=requestAnimationFrame(moveRailDrag);
+ e.preventDefault();if(!d.frame)d.frame=requestAnimationFrame(()=>{d.frame=0;moveRailDrag()});
 });
 document.addEventListener('pointerup',e=>{if(railDrag?.pointerId===e.pointerId){const d=railDrag;moveRailDrag();finishRailDrag();if(!d.active)d.button.click()}},true);
 document.addEventListener('pointercancel',e=>{if(railDrag?.pointerId===e.pointerId)finishRailDrag(true)});

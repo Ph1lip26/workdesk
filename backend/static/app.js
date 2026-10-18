@@ -1,9 +1,18 @@
 const token=document.querySelector('meta[name=workbench-token]').content;
 const $=id=>document.getElementById(id);
-let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',jobsFingerprint='',toastTimer;
+let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',jobsFingerprint='',toastTimer,statePollTimer;
 let douyinPage='library',libraryScroll=0,queueScroll=0;
 let syncPending=false,syncObserved=false,syncLocalStarted=0,syncPollBusy=false,syncStatus=null,syncTransportError='';
 const PAGE_SIZE=30;
+function statePollDelay(snapshot,hidden){
+ if(hidden)return 0;
+ return !snapshot||snapshot.syncing||snapshot.authchecking||snapshot.jobs?.some(j=>['queued','running'].includes(j.status))?3500:15000;
+}
+function scheduleStatePoll(){
+ clearTimeout(statePollTimer);
+ const delay=statePollDelay(state,document.hidden);
+ if(delay)statePollTimer=setTimeout(refresh,delay);
+}
 let pageNumber=1;
 // Same-origin, bounded raster branding. Light-ink centroid provides optical
 // alignment without changing the official geometry or storing brand metadata.
@@ -38,6 +47,7 @@ const cleanTitle=s=>String(s||'未命名视频').replace(/\s*#[^\s#]*/g,'').trim
 function currentJob(id){return state.jobs.find(j=>j.video===id)}
 function videoState(v){if(saved(v))return {key:'done',label:'已入库'};const j=currentJob(v.id);if(j&&['queued','running','needs_review'].includes(j.status))return {key:'pending',label:labels[j.status]};if(j?.status==='failed')return {key:'failed',label:'处理失败'};return {key:'new',label:'未入库'}}
 function eligible(v){const j=currentJob(v.id);return !v.note&&(!j||!['queued','running','needs_review'].includes(j.status))}
+const selectable=v=>Boolean(v.note)||eligible(v);
 function syncNotice(sync,account,count){
  const loginFailure=sync.error_code==='login_required'||account.error_code==='login_required';
  const needsLogin=loginFailure&&account.logged_in!==true;
@@ -161,7 +171,7 @@ function render(){
    const status=videoState(v),title=cleanTitle(v.title),cover=/^https:\/\//.test(v.cover||'')?'<img src="'+esc(v.cover)+'" loading="lazy" referrerpolicy="no-referrer" alt="'+esc(title)+'的封面">':'<span class="placeholder">暂无封面</span>';
    const tip=v.note?'已有知识笔记':v.raw?'已有原始资料，可继续生成知识笔记':v.kind==='images'?'选择图文：逐张识别原图并生成笔记':status.label;
    const duration=v.duration?Math.floor(v.duration/60)+':'+String(Math.round(v.duration)%60).padStart(2,'0'):v.kind==='images'?'图文':'';
-   return '<article class="card '+(selection.has(v.id)?'selected':'')+'" data-id="'+v.id+'" data-status="'+status.key+'"><div class="cover">'+cover+'<label title="'+esc(tip)+'"><input type="checkbox" aria-label="选择作品：'+esc(title)+'" data-video="'+v.id+'" '+(selection.has(v.id)?'checked':'')+' '+(eligible(v)?'':'disabled')+'></label><span class="cover-status '+status.key+'" title="'+esc(tip)+'">'+(status.key==='done'?check:'')+status.label+'</span>'+(duration?'<span class="duration">'+duration+'</span>':'')+'</div><div class="card-content"><a class="card-title" href="'+workURL(v)+'" target="_blank" rel="noopener" title="'+esc(v.title)+'">'+esc(title)+'</a><div class="card-bottom"><span class="author">'+esc(v.author||'作者待确认')+'</span><details class="card-menu" '+(openMenus.has(v.id)?'open':'')+'><summary aria-label="作品选项：'+esc(title)+'">'+moreIcon+'</summary><div><a href="'+workURL(v)+'" target="_blank" rel="noopener">查看原作品</a>'+(saved(v)?'<a class="note-action" data-open-video="'+v.id+'" href="'+noteLink(v.note||v.raw)+'">'+(v.note?'打开知识笔记':'打开原始资料')+'</a>':'')+(v.raw&&!v.note?'<span class="muted">已入库的是原始资料；勾选可继续生成知识笔记。</span>':'')+(v.kind==='images'?'<span class="muted">按原图顺序逐张识别；动态片段不分析。</span>':'')+'</div></details></div>'+($('sort').value==='published'?'<div class="published-date">'+(v.published_at?new Date(v.published_at*1000).toLocaleDateString('zh-CN'):'发布时间未知')+'</div>':'')+'</div></article>';
+   return '<article class="card '+(selection.has(v.id)?'selected':'')+'" data-id="'+v.id+'" data-status="'+status.key+'"><div class="cover">'+cover+'<label title="'+esc(tip)+'"><input type="checkbox" aria-label="选择作品：'+esc(title)+'" data-video="'+v.id+'" '+(selection.has(v.id)?'checked':'')+' '+(selectable(v)?'':'disabled')+'></label><span class="cover-status '+status.key+'" title="'+esc(tip)+'">'+(status.key==='done'?check:'')+status.label+'</span>'+(duration?'<span class="duration">'+duration+'</span>':'')+'</div><div class="card-content"><a class="card-title" href="'+workURL(v)+'" target="_blank" rel="noopener" title="'+esc(v.title)+'">'+esc(title)+'</a><div class="card-bottom"><span class="author">'+esc(v.author||'作者待确认')+'</span><details class="card-menu" '+(openMenus.has(v.id)?'open':'')+'><summary aria-label="作品选项：'+esc(title)+'">'+moreIcon+'</summary><div><a href="'+workURL(v)+'" target="_blank" rel="noopener">查看原作品</a>'+(saved(v)?'<a class="note-action" data-open-video="'+v.id+'" href="'+noteLink(v.note||v.raw)+'">'+(v.note?'打开知识笔记':'打开原始资料')+'</a>':'')+(v.raw&&!v.note?'<span class="muted">已入库的是原始资料；勾选可继续生成知识笔记。</span>':'')+(v.kind==='images'?'<span class="muted">按原图顺序逐张识别；动态片段不分析。</span>':'')+'</div></details></div>'+($('sort').value==='published'?'<div class="published-date">'+(v.published_at?new Date(v.published_at*1000).toLocaleDateString('zh-CN'):'发布时间未知')+'</div>':'')+'</div></article>';
  }).join(''):'<div class="empty">'+(folder?'这个收藏夹没有匹配的视频。':$('search').value||$('status').value!=='all'?'没有匹配的视频。':'尚未读取到收藏，点击刷新收藏。')+'</div>';
  cardFingerprint=cardsKey;
  }
@@ -170,16 +180,18 @@ function render(){
    const selected=selection.has(card.dataset.id);card.classList.toggle('selected',selected);
    card.querySelector('[data-video]').checked=selected;
  }
- const candidates=items.filter(eligible),selectedVisible=candidates.filter(v=>selection.has(v.id)).length;
+ const candidates=items.filter(selectable),selectedVisible=candidates.filter(v=>selection.has(v.id)).length;
  $('selectall').disabled=!candidates.length;$('selectall').checked=candidates.length>0&&selectedVisible===candidates.length;$('selectall').indeterminate=selectedVisible>0&&selectedVisible<candidates.length;
- $('selectionbar').hidden=document.body.dataset.module!=='douyin'||douyinPage==='queue'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=!selection.size;
+ $('selectionbar').hidden=document.body.dataset.module!=='douyin'||douyinPage==='queue'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=![...selection].some(id=>{const v=state.videos.find(v=>v.id===id);return v&&eligible(v)});
+ const ideaCount=[...selection].filter(id=>state.videos.find(v=>v.id===id)?.note).length;
+ $('ideas-from-selection').disabled=!ideaCount;$('ideas-from-selection').textContent='收藏转行动'+(ideaCount?'（'+ideaCount+'）':'');
  $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>state.videos.find(v=>v.id===id)?.raw)?'生成知识笔记':'加入知识库';
  const jobsKey=JSON.stringify([state.jobs,state.topics,state.jobs.map(j=>state.videos.find(v=>v.id===j.video)?.title)]);
  if(jobsKey!==jobsFingerprint){
  $('jobs').innerHTML=state.jobs.length?state.jobs.map(j=>{const v=state.videos.find(v=>v.id===j.video),badge=['completed','skipped'].includes(j.status)?'done':j.status==='failed'?'failed':'pending';return '<div class="job"><span class="badge '+badge+'">'+(badge==='done'?check:'')+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(cleanTitle(v?.title||j.video))+'</p><p class="job-message">'+esc(j.message)+'</p>'+(j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+(j.status==='needs_review'?'<select data-topic="'+j.id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+state.topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+'<div class="job-actions">'+(j.note?'<a data-open-job="'+j.id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+(['failed','cancelled'].includes(j.status)?'<button data-retry="'+j.id+'">重试</button>':'')+(j.status==='needs_review'?'<button data-place="'+j.id+'">确认归类</button>':'')+(!['completed','skipped','cancelled'].includes(j.status)?'<button data-cancel="'+j.id+'">取消</button>':'')+'<button data-preview="'+j.id+'">查看草稿</button></div></div>'}).join(''):'<p class="queue-empty">没有待处理的视频。</p>';
  jobsFingerprint=jobsKey;}
 }
-async function refresh(){if(busy)return false;busy=true;try{state=await api('state');updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!eligible(v))selection.delete(id)}const {browser,sync_progress,...stable}=state;const next=JSON.stringify(stable);if(next!==fingerprint&&!navigationReflow&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false}}
+async function refresh(){if(busy)return false;busy=true;clearTimeout(statePollTimer);try{state=await api('state');updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!selectable(v))selection.delete(id)}const {browser,sync_progress,...stable}=state;const next=JSON.stringify(stable);if(next!==fingerprint&&!navigationReflow&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false;scheduleStatePoll()}}
 $('source').onchange=()=>selectSource($('source').value);
 $('modulepanel').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(button&&state)selectSource(button.dataset.source)});
 const compactNavigation=matchMedia('(max-width:1100px)');
@@ -189,13 +201,22 @@ let navigationAnimations=[];
 let navigationReflow=null,navigationGeneration=0;
 const railGlyphAnimations=new Map();
 const moduleGlyphAnimations=new Map();
+const moduleViewAnimations=new Map();
+function clearModuleViewAnimations(){moduleViewAnimations.forEach(a=>a.cancel());moduleViewAnimations.clear()}
+function animateModuleView(el){
+ const previous=moduleViewAnimations.get(el),visible=previous?getComputedStyle(el).transform:null;
+ clearModuleViewAnimations();if(!navigationMotionEnabled())return;
+ const a=el.animate([{transform:visible&&visible!=='none'?visible:'translateY(3px)'},{transform:'translateY(0)'}],{duration:280,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
+ moduleViewAnimations.set(el,a);
+ a.finished.then(()=>{if(moduleViewAnimations.get(el)===a){moduleViewAnimations.delete(el);a.cancel()}}).catch(()=>{});
+}
 function animateModuleGlyph(name){
  if(!navigationMotionEnabled())return;
  const button=$(name==='home'?'homemodule':name==='health'?'healthmodule':name==='purchases'?'purchasemodule':'douyinmodule');
  const el=name==='douyin'?button.querySelector('.rail-symbol'):button.querySelector('svg');
  // One composited layer per icon. Do not transform individual SVG strokes,
  // rotate a bookmark, or restart unrelated icons during rapid module switches.
- const previous=moduleGlyphAnimations.get(el),visible=getComputedStyle(el).transform;
+ const previous=moduleGlyphAnimations.get(el),visible=previous?getComputedStyle(el).transform:null;
  previous?.cancel();
  const start=previous&&visible!=='none'?visible:'translateY(2px) scale(.96)';
  const animation=el.animate([{transform:start},{transform:'translateY(0) scale(1)'}],{duration:360,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
@@ -203,20 +224,21 @@ function animateModuleGlyph(name){
  animation.finished.then(()=>{if(moduleGlyphAnimations.get(el)===animation){moduleGlyphAnimations.delete(el);animation.cancel()}}).catch(()=>{});
 }
 function setRailGlyphState(expanded){
- const toggle=$('navtoggle'),name=document.body.dataset.module;
- if(!['douyin','purchases','health'].includes(name)){toggle.setAttribute('aria-expanded','false');return}
+ const name=document.body.dataset.module;
+ if(!['douyin','purchases','health'].includes(name))return;
  const module=$(name==='purchases'?'purchasemodule':name==='health'?'healthmodule':'douyinmodule');
  const changed=module.getAttribute('aria-expanded')!==String(expanded);
- if(!changed){toggle.setAttribute('aria-expanded',String(expanded));return}
- const pieces=module.id!=='douyinmodule'?[toggle.querySelector('svg path:last-child')]:[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child'),toggle.querySelector('svg path:last-child')];
+ if(!changed)return;
+ const pieces=module.id!=='douyinmodule'?[]:[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child')];
  // Read the visible mid-flight state before cancelling: rapid reversal never
  // snaps to the previous endpoint. Only transforms/opacity are animated.
- const before=pieces.map(el=>({transform:getComputedStyle(el).transform,opacity:getComputedStyle(el).opacity}));
+ const before=pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}});
  railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();
- toggle.setAttribute('aria-expanded',String(expanded));module.setAttribute('aria-expanded',String(expanded));
+ module.setAttribute('aria-expanded',String(expanded));
  if(!changed||!navigationMotionEnabled())return;
+ const ends=pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}});
  pieces.forEach((el,i)=>{
-  const end={transform:getComputedStyle(el).transform,opacity:getComputedStyle(el).opacity};
+  const end=ends[i];
   const animation=el.animate([before[i],end],{duration:i<2?(expanded?440:360):280,delay:[0,0,25,45,0][i],fill:'both',easing:'cubic-bezier(.16,1,.3,1)'});
   railGlyphAnimations.set(el,animation);
   animation.finished.then(()=>{if(railGlyphAnimations.get(el)===animation){railGlyphAnimations.delete(el);animation.cancel()}}).catch(()=>{});
@@ -229,7 +251,7 @@ function navigationMotionEnabled(){
 function updateNavigationMotion(mode){
  mode=['system','on','off'].includes(mode)?mode:'system';
  if(document.body.dataset.navigationMotion!==mode){
-   stopNavigationAnimation();moduleGlyphAnimations.forEach(a=>a.cancel());moduleGlyphAnimations.clear();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();document.body.dataset.navigationMotion=mode;
+   stopNavigationAnimation();clearModuleViewAnimations();moduleGlyphAnimations.forEach(a=>a.cancel());moduleGlyphAnimations.clear();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();document.body.dataset.navigationMotion=mode;
   document.documentElement.dataset.navigationMotion=mode;
  }
  $('navigationmotion').value=mode;
@@ -246,23 +268,23 @@ function gridColumnCount(){
  return value==='none'?0:value.split(/\s+/).length;
 }
 function transitionNavigation(change){
- const workspace=document.querySelector('.workspace'),grid=$('cards');
- const before=workspace.getBoundingClientRect(),gridBefore=grid.getBoundingClientRect();
+ const workspace=document.querySelector('.workspace'),content=document.querySelector('.workspace-content'),grid=$('cards');
+ const before=content.getBoundingClientRect(),viewport=workspace.getBoundingClientRect(),gridBefore=grid.getBoundingClientRect();
  const nodes=document.body.dataset.module==='douyin'&&douyinPage==='library'?[...grid.querySelectorAll(':scope>.card')]:[];
  // Capture the actual displayed geometry, including an interrupted transition.
  // The same nodes stay mounted; no screenshot, opacity hand-off or grid zoom.
  const starts=nodes.map(card=>({card,rect:card.getBoundingClientRect()}));
- const scroll=workspace.scrollTop,edge=before.top+20;
+ const scroll=workspace.scrollTop,edge=viewport.top+20;
  const anchor=starts.find(x=>x.rect.bottom>edge);
  stopNavigationAnimation();change();
  if(!navigationMotionEnabled()||typeof workspace.animate!=='function')return;
- const after=workspace.getBoundingClientRect();
+ const after=content.getBoundingClientRect();
  if(Math.abs(before.left-after.left)<1)return;
  const gridAfter=grid.getBoundingClientRect(),ends=nodes.map(card=>card.getBoundingClientRect());
  const generation=navigationGeneration,duration=560,easing='cubic-bezier(.22,1,.36,1)';
  const options={duration,easing,fill:'both'};
  const originalGridStyle=grid.getAttribute('style'),styles=nodes.map(card=>card.getAttribute('style'));
- const scrollEnd=anchor&&scroll>0?Math.max(0,scroll+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
+ const scrollEnd=anchor&&scroll>0?Math.max(0,workspace.scrollTop+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
  let scrollFrame=0,userScrolled=false;
  const manualScroll=()=>{userScrolled=true};
  workspace.addEventListener('wheel',manualScroll,{passive:true});workspace.addEventListener('pointerdown',manualScroll,{passive:true});
@@ -272,16 +294,22 @@ function transitionNavigation(change){
   nodes.forEach((card,i)=>{card.style.cssText=styles[i]||''});
  };
  navigationReflow={restore};document.body.classList.add('nav-moving');
- const frame=left=>({marginLeft:left+'px',width:'calc(100% - '+left+'px)'});
- const slide=workspace.animate([frame(before.left),frame(after.left)],options);
+ const slide=content.animate([{transform:`translateX(${before.left-after.left}px)`},{transform:'translateX(0)'}],options);
  navigationAnimations=[slide];
  if(nodes.length){
   grid.style.position='relative';grid.style.display='block';grid.style.height=gridAfter.height+'px';
-  navigationAnimations.push(grid.animate([{height:gridBefore.height+'px'},{height:gridAfter.height+'px'}],options));
+  // Only a scrolled list needs its scroll range interpolated to preserve the anchor.
+  if(scroll>0)navigationAnimations.push(grid.animate([{height:gridBefore.height+'px'},{height:gridAfter.height+'px'}],options));
   starts.forEach(({card,rect},i)=>{
    const end=ends[i];
    card.style.position='absolute';card.style.margin='0';card.style.left=(end.left-gridAfter.left)+'px';card.style.top=(end.top-gridAfter.top)+'px';
-   card.style.width=end.width+'px';card.style.height=end.height+'px';card.style.transformOrigin='0 0';card.style.contain='layout paint';card.style.willChange='transform';
+   card.style.width=end.width+'px';card.style.height=end.height+'px';card.style.transformOrigin='0 0';card.style.contain='layout paint';
+  });
+  // Batch style writes before starting effects; offscreen cards need no GPU layer.
+  starts.forEach(({card,rect},i)=>{
+   const end=ends[i];
+   if(!((rect.bottom>viewport.top&&rect.top<viewport.bottom)||(end.bottom>viewport.top&&end.top<viewport.bottom)))return;
+   card.style.willChange='transform';
    const dx=(rect.left-gridBefore.left)-(end.left-gridAfter.left),dy=(rect.top-gridBefore.top)-(end.top-gridAfter.top);
    // Fixed card layout; interpolate on the compositor, not thirty layouts per
    // frame. Real old/end rectangles give monotonic size without a grid zoom.
@@ -309,7 +337,7 @@ function transitionNavigation(change){
 function updateNavigationLayout(){
  // One persistent panel, never moved into a modal/top layer.
  stopNavigationAnimation();
- if(compactNavigation.matches&&$('modulepanel').contains(document.activeElement))$('navtoggle').focus({preventScroll:true});
+ if(compactNavigation.matches&&$('modulepanel').contains(document.activeElement))document.querySelector('#modules>.rail-button.active').focus({preventScroll:true});
  compactPanelOpen=false;
  document.body.classList.toggle('panel-collapsed',!compactNavigation.matches&&panelCollapsed);
  updateNavigationToggle();
@@ -323,7 +351,8 @@ function updateNavigationToggle(){
  // hidden, then pops into view already almost opaque in native reduced motion.
  document.body.dataset.navigationExpanded=String(expanded);
  document.body.classList.toggle('nav-open',hasPanel&&compactNavigation.matches&&compactPanelOpen);
- $('panelhost').hidden=!hasPanel;$('navtoggle').hidden=!hasPanel;
+ $('panelhost').hidden=!hasPanel;
+ for(const button of $('modules').children)if(!button.classList.contains('active'))button.removeAttribute('aria-expanded');
  $('modulepanel').inert=!expanded;
  $('modulepanel').setAttribute('aria-hidden',String(!expanded));
  setRailGlyphState(expanded);
@@ -332,11 +361,10 @@ function updateNavigationToggle(){
  $('healthmodule').setAttribute('aria-label',document.body.dataset.module==='health'?(expanded?'个人健康，收起导航':'个人健康，展开导航'):'打开个人健康');
  $('homemodule').removeAttribute('aria-expanded');
  $('homemodule').setAttribute('aria-label',home?'首页，当前模块':'打开首页');
- $('navtoggle').setAttribute('aria-label',expanded?'收起导航':'展开导航');$('navtoggle').title=expanded?'收起导航':'展开导航';
 }
 function closeCompactNavigation(restoreFocus=false){
  if(!compactNavigation.matches||!compactPanelOpen)return;
- if(restoreFocus)$('navtoggle').focus({preventScroll:true});
+ if(restoreFocus)document.querySelector('#modules>.rail-button.active').focus({preventScroll:true});
  transitionNavigation(()=>{compactPanelOpen=false;updateNavigationToggle()});
 }
 function toggleNavigation(){
@@ -348,7 +376,6 @@ function toggleNavigation(){
  if(document.body.dataset.module!=='douyin')animateModuleGlyph(document.body.dataset.module);
  });
 }
-$('navtoggle').onclick=toggleNavigation;
 $('closenav').onclick=()=>closeCompactNavigation(true);
 $('douyinmodule').onclick=toggleNavigation;
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&compactPanelOpen&&!document.querySelector('dialog:modal')){e.preventDefault();closeCompactNavigation(true)}});
@@ -367,9 +394,33 @@ $('sync').onclick=startFavoritesRefresh;$('login').onclick=()=>action('login');$
 $('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queue-refresh').onclick=()=>refreshWithFeedback('queue-refresh',refresh);$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
 $('import').onclick=async()=>{const r=await action('import',{links:$('links').value});if(r){$('links').value='';view='local';folder='';pageNumber=1;render();$('tools').close();toast('已加入待选列表')}};
 $('clear').onclick=()=>{selection.clear();render()};
-$('selectall').onclick=()=>{const candidates=pageSlice(visible()).filter(eligible);if(candidates.some(v=>selection.has(v.id))){for(const v of candidates)selection.delete(v.id)}else{for(const v of candidates){if(selection.size>=20)break;selection.add(v.id)}}render()};
+$('selectall').onclick=()=>{const candidates=pageSlice(visible()).filter(selectable);if(candidates.some(v=>selection.has(v.id))){for(const v of candidates)selection.delete(v.id)}else{for(const v of candidates){if(selection.size>=20)break;selection.add(v.id)}}render()};
 document.addEventListener('change',e=>{const id=e.target.dataset.video;if(!id)return;if(e.target.checked){if(selection.size>=20){e.target.checked=false;toast('每批最多 20 条');return}selection.add(id)}else selection.delete(id);render();document.querySelector('[data-video='+JSON.stringify(id)+']')?.focus({preventScroll:true})});
-$('enqueue').onclick=async()=>{if(!confirm('为所选 '+selection.size+' 条作品生成知识笔记，会使用 Codex 额度。已有原始资料不重复保存，归类不明确时等待你选择。继续？'))return;const r=await action('enqueue',{ids:[...selection]});if(r){selection.clear();render();openQueuePage();toast('已加入 '+r.added.length+' 条；跳过 '+r.skipped.length+' 条重复项')}};
+let enqueueIDs=[],enqueueBusy=false;
+function closeEnqueueConfirm(){if(!enqueueBusy)$('enqueueconfirm').close()}
+$('enqueue').onclick=()=>{
+ if(enqueueBusy||$('enqueueconfirm').open)return;
+ enqueueIDs=[...selection].filter(id=>{const v=state.videos.find(v=>v.id===id);return v&&eligible(v)});if(!enqueueIDs.length)return;
+ $('enqueue-count').textContent=String(enqueueIDs.length);
+ $('enqueue-error').hidden=true;$('enqueue-submit').textContent='开始处理';
+ $('enqueueconfirm').showModal();$('enqueue-cancel').focus({preventScroll:true});
+};
+$('enqueue-cancel').onclick=closeEnqueueConfirm;
+$('enqueueconfirm').addEventListener('cancel',e=>{if(enqueueBusy)e.preventDefault()});
+$('enqueueconfirm').addEventListener('close',()=>{enqueueIDs=[]});
+$('enqueue-submit').onclick=async()=>{
+ if(enqueueBusy||!enqueueIDs.length)return;
+ const ids=[...enqueueIDs];enqueueBusy=true;
+ $('enqueue-submit').disabled=true;$('enqueue-cancel').disabled=true;
+ $('enqueue-submit').setAttribute('aria-busy','true');$('enqueue-submit').textContent='正在加入队列…';$('enqueue-error').hidden=true;
+ try{
+  const r=await api('enqueue',{ids});
+  for(const id of ids)selection.delete(id);
+  enqueueBusy=false;$('enqueueconfirm').close();await refresh();render();openQueuePage();
+  toast('已加入 '+r.added.length+' 条；跳过 '+r.skipped.length+' 条重复项');
+ }catch(error){$('enqueue-error').textContent=error.message;$('enqueue-error').hidden=false}
+ finally{enqueueBusy=false;$('enqueue-submit').disabled=false;$('enqueue-cancel').disabled=false;$('enqueue-submit').removeAttribute('aria-busy');$('enqueue-submit').textContent='开始处理'}
+};
 document.addEventListener('click',async e=>{const note=e.target.closest('[data-open-job],[data-open-video]');if(note){e.preventDefault();if(note.getAttribute('aria-busy')==='true')return;note.setAttribute('aria-busy','true');try{await api('open_note',note.dataset.openJob?{job:note.dataset.openJob}:{video:note.dataset.openVideo});toast('已在 Obsidian 打开笔记')}catch(err){toast(err.message)}finally{note.removeAttribute('aria-busy')}return}const elPage=e.target.closest('[data-page]');if(elPage){changePage(Number(elPage.dataset.page));return}const cover=e.target.closest('.cover');if(cover&&!e.target.closest('label,input')){const input=cover.querySelector('[data-video]');if(input&&!input.disabled)input.click();return}const el=e.target.closest('button');if(!el)return;const d=el.dataset;if(d.retry)await action('retry',{id:d.retry});if(d.cancel)await action('cancel',{id:d.cancel});if(d.place){const t=document.querySelector('[data-topic="'+d.place+'"]');await action('place',{id:d.place,topic:t.value})}if(d.preview){try{const r=await api('preview?id='+encodeURIComponent(d.preview));$('previewtext').textContent=r.note_markdown?r.note_markdown+'\n\n画面摘要：\n'+r.visual_summary+'\n\n待核实：\n'+(r.uncertainties||[]).join('\n'):'尚未生成草稿。';$('preview').showModal()}catch(err){toast(err.message)}}});
 $('closepreview').onclick=()=>$('preview').close();
 $('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toast('请扫码登录；成功后关闭窗口，再刷新收藏')};
@@ -377,13 +428,15 @@ $('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toas
 // Preview closes independently; the underlying queue remains a normal page.
 for(const dialog of document.querySelectorAll('dialog')){
  if(dialog.id==='purchaseeditor')continue; // Its own closer protects unsaved edits.
+ const close=dialog.id==='enqueueconfirm'?closeEnqueueConfirm:()=>dialog.close();
  let down=null;
  const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};
  dialog.addEventListener('pointerdown',e=>{down=outside(e)?e.pointerId:null});
- dialog.addEventListener('pointerup',e=>{if(down===e.pointerId&&outside(e))dialog.close();down=null});
+ dialog.addEventListener('pointerup',e=>{if(down===e.pointerId&&outside(e))close();down=null});
  dialog.addEventListener('pointercancel',()=>down=null);
 }
-alignWorkspaceBrand();refresh();setInterval(refresh,3500);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(statePollTimer);else refresh()});
+alignWorkspaceBrand();refresh();
 
 setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing||state?.syncing||syncTransportError))pollSyncStatus()},900);
-setInterval(()=>{if(syncPending||syncStatus?.syncing)paintSyncStatus()},1000);
+setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing))paintSyncStatus()},1000);

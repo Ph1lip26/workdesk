@@ -16,7 +16,6 @@ html[data-appearance=day] .workspace-logo{filter:brightness(0)}
 html[data-appearance=day] :is(.workspace-name,.rail-button,.nav-caption,.panel-link,.nav-count,.panel-link svg,.tile-evidence,.tile-foot>span,.tile-record-top small,.schedule-date,.tile-handle){color:var(--muted)}
 html[data-appearance=day] .rail-button.active{color:var(--text);background-color:#dedede;background-image:var(--metal-finish);border-color:#8d8d8d;box-shadow:var(--metal-shadow)}
 html[data-appearance=day] .rail-button.active::before{background:#303030}
-html[data-appearance=day] #navtoggle[aria-expanded=true]{color:var(--text);background:#00000007}
 html[data-appearance=day] .rail-panel-glyph rect{fill:#00000005}
 html[data-appearance=day] .module-rail{box-shadow:inset -1px 0 0 #00000009}
 html[data-appearance=day] .module-panel{border-right-color:#00000010;box-shadow:inset 1px 0 0 #ffffff50}
@@ -47,6 +46,7 @@ html[data-appearance=day] :is(.card-menu summary:hover,.card-menu[open] summary,
 html[data-appearance=day] :is(dialog,.drawer){background:#f5f5f5f7;border-color:#888888;box-shadow:inset 0 1px 0 #fff,0 24px 80px #2020202b}
 html[data-appearance=day] .icon-close{background:var(--control);color:var(--text)}
 html[data-appearance=day] dialog::backdrop{background:#2020202b}
+html[data-appearance=day] dialog.enqueue-confirm{background-color:var(--metal-fill);background-image:var(--metal-finish);border-color:var(--metal-edge);box-shadow:var(--metal-shadow),0 24px 80px #2020202b}
 html[data-appearance=day] :is(.muted,.queue-empty,.job-message,.detail-status,.detail-trigger,.detail-source>span,.detail-boundary,.purchase-field-note,.purchase-editor-actions>span){color:var(--muted)}
 html[data-appearance=day] :is(dialog textarea,dialog select,.purchase-editor input,.purchase-editor textarea,.purchase-editor select,.purchase-brief textarea){background:#f5f5f5;border-color:#888888;color:var(--text)}
 html[data-appearance=day] :is(.purchase-status,.purchase-discard,.purchase-error,.notice,.purchase-empty){background:#00000003;border-color:#929292;color:var(--text)}

@@ -81,7 +81,7 @@ async function create(){
 }
 function authorizeSetup(e){if(e.sender!==window.webContents || e.senderFrame?.url!==setupURL)throw Error('只允许本机设置页使用此接口')}
 async function getToken(){const page=await request(origin,'/');const m=page.match(/name="workbench-token" content="([^"]+)"/);if(!m)throw Error('后台令牌无效');return m[1]}
-async function idle(){if(!origin)return true;try{await request(origin,'/health')}catch{return true}try{const s=JSON.parse(await request(origin,'/api/state',await getToken()));return !s.syncing&&!s.authchecking&&!s.jobs.some(j=>['queued','running'].includes(j.status))}catch{return false}}
+async function idle(){if(!origin)return true;try{await request(origin,'/health')}catch{return true}try{const s=JSON.parse(await request(origin,'/api/state',await getToken()));return !s.syncing&&!s.authchecking&&!s.action_running&&!s.jobs.some(j=>['queued','running'].includes(j.status))}catch{return false}}
 async function stopBackend(){if(!origin)return;try{await request(origin,'/health')}catch{origin='';return}await request(origin,'/api/shutdown',await getToken(),'{}');for(let n=0;n<30;n++){try{await request(origin,'/health');await new Promise(r=>setTimeout(r,200))}catch{origin='';return}}throw Error('后台仍在退出，没有强制终止它')}
 async function startBackend(){
   fs.mkdirSync(home,{recursive:true});

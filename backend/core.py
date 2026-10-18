@@ -1,8 +1,8 @@
-import contextlib, datetime, hashlib, importlib.util, json, os, queue, re, secrets, sqlite3, subprocess, threading, time, uuid
+import contextlib, datetime, hashlib, json, os, re, sqlite3, subprocess, threading, time, uuid
 from pathlib import Path
-from urllib.parse import quote
 
-from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDIAN
+from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDIAN,creation_flags
+from storage import read_json,atomic_json
 from home import Homepage
 from appearance import read_mode,save_mode
 TERMINAL={'completed','skipped','cancelled'}
@@ -27,17 +27,6 @@ def home_order(value,legacy=False):
     raise ValueError('首页布局必须包含全部卡片，且不能重复或加入未知卡片')
 
 def today(): return datetime.date.today().isoformat()
-def read_json(p, default=None):
-    try:return json.loads(Path(p).read_text(encoding='utf-8-sig'))
-    except (OSError,ValueError):return default
-def atomic_json(p,v):
-    p=Path(p);p.parent.mkdir(parents=True,exist_ok=True)
-    t=p.with_suffix('.tmp');t.write_text(json.dumps(v,ensure_ascii=False,indent=2),encoding='utf-8')
-    for attempt in range(30):
-        try:os.replace(t,p);return
-        except PermissionError:
-            if attempt==29:raise
-            time.sleep(.05)
 def video_id(value):
     m=re.search(r'(?:modal_id=|/video/|/note/|^)(\d{15,22})(?:\D|$)',str(value).strip())
     if not m:raise ValueError('请提供视频链接或视频ID；短分享链接先在浏览器展开为完整链接')
@@ -61,7 +50,6 @@ def discover_codex():
     if found:return found[0]
     raise RuntimeError('未找到Codex，请在工作台设置中指定已安装的Codex命令行路径并登录')
 
-def creation_flags():return subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
 def source_ids(s):
     head=s.split('---',2)[1] if s.startswith('---') and s.count('---')>=2 else s[:1500]
     return set(re.findall(r'(?:modal_id=|/video/|/note/)(\d{15,22})',head))
@@ -264,12 +252,15 @@ IMAGE_SCHEMA['properties']['evidence']['items']={
 class Service:
     def __init__(self,store=None,vault=VAULT,start_worker=True):
         self.vault=Path(vault);self.store=store or Store(ROOT/'data/state.sqlite3');self.bridge=BrowserBridge();self.stop=threading.Event();self.wake=threading.Event();self.sync_lock=threading.Lock();self.auth_lock=threading.Lock();self.write_lock=threading.Lock()
+        self.topic_lock=threading.Lock();self.topic_cache=None;self.topic_checked=0
         self.home=Homepage(self.vault,ROOT)
         self.sync_started=0;self.sync_phase=''
         from purchases import Purchases
         self.purchases=Purchases(self.store,self.vault)
         from health import Health
-        self.health=Health(self.store)
+        self.health=Health(self.store,self.home)
+        from action_ideas import ActionIdeas
+        self.ideas=ActionIdeas(self,ROOT,discover_codex)
         self.import_local();self.refresh_notes()
         if start_worker:threading.Thread(target=self.worker,daemon=True).start()
     def import_local(self):
@@ -286,6 +277,7 @@ class Service:
         with self.store.connect() as c:
             c.execute("UPDATE videos SET note='',raw=''")
             for vid,r in records.items():c.execute('UPDATE videos SET raw=?,note=? WHERE id=?',(r['raw'],r['note'],vid))
+        with self.topic_lock:self.topic_cache=None
         return len(records)
     def sync(self):
         if not self.sync_lock.acquire(False):raise ValueError('收藏同步已在进行')
@@ -327,14 +319,21 @@ class Service:
             except Exception:self.store.set_setting('account',json.dumps(dict(logged_in=False,needs_login=False,error_code='auth_check_failed',message='登录检查未成功；收藏已保留，不代表登录已失效',updated=time.time()),ensure_ascii=False))
             finally:self.auth_lock.release()
         threading.Thread(target=run,daemon=True).start()
+    def snapshot_topics(self):
+        # shortcut: menu metadata may lag 30s; publishing still validates live paths.
+        with self.topic_lock:
+            now=time.monotonic()
+            if self.topic_cache is None or now-self.topic_checked>=30:
+                self.topic_cache=topics(self.vault);self.topic_checked=now
+            return list(self.topic_cache)
     def snapshot(self):
         videos=self.store.rows('SELECT * FROM videos ORDER BY favorite DESC,favorite_position IS NULL,favorite_position ASC,id DESC')
-        jobs=self.store.rows('SELECT * FROM jobs ORDER BY created DESC LIMIT 300')
-        for j in jobs:j['result']='' # Full evidence available only in explicit preview endpoint.
+        # Keep large evidence blobs in SQLite until the explicit preview request.
+        jobs=self.store.rows("SELECT id,video,status,stage,message,created,updated,attempt,topic,'' AS result,note,cancel FROM jobs ORDER BY created DESC LIMIT 300")
         return dict(videos=videos,jobs=jobs,folders=self.store.rows('SELECT * FROM folders ORDER BY name'),membership=self.store.rows('SELECT * FROM membership'),
                     browser=read_json(PRIVATE/'browser-state.json',dict(status='closed')),sync=json.loads(self.store.setting('sync_result','{}')),
                     syncing=self.sync_lock.locked(),sync_progress=self.sync_status()['progress'],authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
-                      appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),module_order=self.module_order(),topics=topics(self.vault),url=getattr(self,'origin',''),vault=self.vault.name)
+                      action_running=self.ideas.busy,appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),module_order=self.module_order(),topics=self.snapshot_topics(),url=getattr(self,'origin',''),vault=self.vault.name)
     def sync_status(self):
         started=getattr(self,'sync_started',0);running=self.sync_lock.locked()
         browser=read_json(PRIVATE/'browser-state.json',{})
@@ -619,21 +618,28 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
         self.update_job(jid,status='completed',stage='done',message='笔记、索引及处理日志已写入',note=note);self.refresh_notes()
     def worker(self):
         while not self.stop.is_set():
-            if self.store.setting('paused','1')=='1':self.wake.wait(1);self.wake.clear();continue
+            # Clear before reading state so a command between query and wait is not lost.
+            self.wake.clear()
+            if self.store.setting('paused','1')=='1':self.wake.wait(30);continue
             q=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY created LIMIT 1")
-            if not q:self.wake.wait(1);self.wake.clear();continue
+            if not q:self.wake.wait(30);continue
             j=q[0]
             try:self.process_job(j)
             except subprocess.TimeoutExpired:self.update_job(j['id'],status='failed',message='阶段超时；中间结果保留，可重试')
             except Exception as e:
                 self.update_job(j['id'],status='failed',message=str(e)[:400])
-                if self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage']=='gpt':self.store.set_setting('paused','1')
+                if self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage'] in ('gpt','components'):self.store.set_setting('paused','1')
     def action(self,name,payload):
+        if name=='action_generate':return self.ideas.start(payload)
+        if name=='action_mark':return self.ideas.mark(payload)
+        if name in ('enqueue','retry','place','resume') and self.ideas.busy:
+            raise ValueError('行动建议正在生成，请完成后再启动入库队列')
         if name=='appearance':return save_mode(ROOT,payload.get('mode'))
         if name=='open_refresh':
             # Compatibility with older renderers: never scan or start a browser.
             return dict(ok=True,local_notes=None,remote='disabled')
         if name=='health_save':return self.health.save(payload)
+        if name=='health_sync':return self.health.sync()
         if name=='module_order':
             order=rail_order(payload.get('order'))
             self.store.set_setting('module_order',json.dumps(order))

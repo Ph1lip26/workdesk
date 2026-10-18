@@ -28,10 +28,10 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   async function navigationSettled(){
    await sleep(50);
    for(let n=0;n<40;n++){
-    if(await js("!document.body.classList.contains('nav-moving')&&document.getAnimations().every(a=>a.playState!=='running'||!a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.cards,.card,#douyinmodule,#douyinmodule svg,#navtoggle svg path:last-child,.window-chrome'))"))return;
+    if(await js("!document.body.classList.contains('nav-moving')&&document.getAnimations().every(a=>a.playState!=='running'||!a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.cards,.card,#douyinmodule,#douyinmodule svg,#douyinmodule .rail-panel-glyph path:last-child,.window-chrome'))"))return;
     await sleep(50);
    }
-   const pending=await js("document.getAnimations().filter(a=>a.playState==='running'&&a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.cards,.card,#douyinmodule,#douyinmodule svg,#navtoggle svg path:last-child,.window-chrome')).map(a=>({target:a.effect.target.id||a.effect.target.className.baseVal||a.effect.target.className,type:a.constructor.name,time:a.currentTime,duration:a.effect.getTiming().duration,iterations:a.effect.getTiming().iterations}))");
+   const pending=await js("document.getAnimations().filter(a=>a.playState==='running'&&a.effect?.target?.matches('.module-panel,.panel-heading,.panel-nav,.panel-footer,.workspace,.cards,.card,#douyinmodule,#douyinmodule svg,#douyinmodule .rail-panel-glyph path:last-child,.window-chrome')).map(a=>({target:a.effect.target.id||a.effect.target.className.baseVal||a.effect.target.className,type:a.constructor.name,time:a.currentTime,duration:a.effect.getTiming().duration,iterations:a.effect.getTiming().iterations}))");
    const state=await js("({moving:document.body.classList.contains('nav-moving'),reflow:!!navigationReflow,generation:navigationGeneration,animations:navigationAnimations.map(a=>({state:a.playState,time:a.currentTime,pending:a.pending})),visibility:document.visibilityState})");
    throw Error('Navigation did not settle within two seconds: '+JSON.stringify({pending,state}));
   }
@@ -40,10 +40,72 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('homepage has a real stage and four current subjects',await js("document.querySelector('.tile-phase h3').textContent==='测试阶段'&&document.querySelectorAll('.status-record').length===4"));
   check('homepage and library are separate registered modules',await js("Object.keys(moduleRegistry).length===4&&document.getElementById('douyinview').hidden"));
   check('home has six movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===6"));
-  check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('navtoggle').hidden&&document.getElementById('modulepanel').inert"));
+  check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('modulepanel').inert"));
   check('home content starts at primary rail',await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.querySelector('.module-rail').getBoundingClientRect().right)<1"));
+  if(process.env.WORKDESK_SMOKE_SCOPE==='queue-style'){
+   desk.show();await sleep(180);wc.debugger.attach('1.3');
+   await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+   check('fixture emulates system reduced motion',await js("matchMedia('(prefers-reduced-motion:reduce)').matches"));
+   const stored=JSON.parse(await request(desk.origin,'/api/state',await js('token'))).jobs;
+   await js("openQueuePage();state.jobs=['completed','skipped','running','failed','queued'].map((status,i)=>({id:'fixture-style-'+i,video:state.videos[0].id,status,message:'合成任务状态',updated:i}));jobsFingerprint='';render()");
+   for(const mode of ['night','day']){
+    await js(`paintAppearance('${mode}');updateNavigationMotion('on')`);await sleep(100);
+    check(mode+': completed and skipped show one SVG and no character check',await js("[...document.querySelectorAll('#jobs .badge.done')].length===2&&[...document.querySelectorAll('#jobs .badge.done')].every(b=>b.querySelectorAll('svg[data-lucide=check]').length===1&&['none','normal','\"\"'].includes(getComputedStyle(b,'::before').content)&&!b.textContent.includes('✓'))"));
+    check(mode+': single check is compact and aligned',await js("[...document.querySelectorAll('#jobs .badge.done')].every(b=>getComputedStyle(b).alignItems==='center'&&getComputedStyle(b.querySelector('svg')).width==='14px')"));
+    check(mode+': only running task has an indeterminate bar',await js("document.querySelectorAll('#jobs .job-progress').length===1&&!document.querySelector('.job-progress').hasAttribute('aria-valuenow')"));
+    const start=await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform");await sleep(180);
+    check(mode+': local opt-in animates processing under reduced-motion OS',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform")!==start);
+    check(mode+': progress uses theme ink and rounded ends',await js("(()=>{const bar=document.querySelector('.job-progress'),s=getComputedStyle(bar),ink=getComputedStyle(bar,'::after');return parseFloat(s.borderRadius)>=99&&ink.backgroundImage.includes(getComputedStyle(document.body).color)})()"));
+    await capture(path.join(fixture,'queue-style-'+mode+'.png'));
+    await js("updateNavigationMotion('off')");
+    check(mode+': explicit motion-off keeps a static processing indicator',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationName==='none'"));
+    await js("updateNavigationMotion('system')");
+    check(mode+': system mode respects reduced motion',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationName==='none'"));
+    await js("updateNavigationMotion('on');selectModule('home',{animate:false})");
+    check(mode+': progress pauses outside the collection module',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationPlayState==='paused'"));
+    await js("openQueuePage()");
+   }
+   check('queue visual checks never write real jobs',JSON.stringify(JSON.parse(await request(desk.origin,'/api/state',await js('token'))).jobs),JSON.stringify(stored));
+   check('queue style has no renderer errors',errors.length,0);wc.debugger.detach();
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'queue-style',checks},null,2));await desk.quit();return;
+  }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='queue'){
+   await js("selectModule('douyin',{animate:false});window.confirm=()=>{throw new Error('Native confirm must not be called')};window.__fixtureIDs=state.videos.filter(eligible).slice(0,3).map(v=>v.id);selection=new Set(window.__fixtureIDs);render()");
+   await js("window.__queueAPI=api;true");
+   for(const mode of ['night','day']){
+    await js(`paintAppearance('${mode}');$('enqueue').click()`);await sleep(280);
+    check(mode+' in-app confirmation opens',await js("$('enqueueconfirm').open&&$('enqueue-count').textContent==='3'"));
+    check(mode+' cancel receives default focus',await js("document.activeElement.id==='enqueue-cancel'"));
+    check(mode+' uses shared material and font',await js("(()=>{const s=getComputedStyle($('enqueueconfirm'));return s.backgroundImage!=='none'&&parseFloat(s.borderRadius)>=28&&s.fontFamily===getComputedStyle(document.body).fontFamily})()"));
+    await capture(path.join(fixture,'enqueue-confirm-'+mode+'.png'));
+    await js("$('enqueue-cancel').click()");
+    check(mode+' cancel preserves selection',await js("!$('enqueueconfirm').open&&selection.size===3"));
+   }
+   await js("$('enqueue').click()");wc.sendInputEvent({type:'keyDown',keyCode:'Escape'});wc.sendInputEvent({type:'keyUp',keyCode:'Escape'});await sleep(80);
+   check('Escape safely cancels',await js("!$('enqueueconfirm').open&&selection.size===3"));
+   await js("$('enqueue').click();$('enqueueconfirm').dispatchEvent(new PointerEvent('pointerdown',{pointerId:8,clientX:0,clientY:0}));$('enqueueconfirm').dispatchEvent(new PointerEvent('pointerup',{pointerId:8,clientX:0,clientY:0}))");
+   check('outer backdrop safely cancels',await js("!$('enqueueconfirm').open&&selection.size===3"));
+   await js("window.__requests=[];api=(name,data)=>{if(name!=='enqueue')return window.__queueAPI(name,data);window.__requests.push(data);return new Promise((resolve,reject)=>{window.__resolveQueue=resolve;window.__rejectQueue=reject})};$('enqueue').click();$('enqueue-submit').click();$('enqueue-submit').click()");
+   check('double submit sends one request',await js("window.__requests.length===1&&$('enqueue-submit').disabled&&$('enqueue-cancel').disabled"));
+   await js("$('enqueueconfirm').dispatchEvent(new Event('cancel',{cancelable:true}));$('enqueueconfirm').dispatchEvent(new PointerEvent('pointerdown',{pointerId:9,clientX:0,clientY:0}));$('enqueueconfirm').dispatchEvent(new PointerEvent('pointerup',{pointerId:9,clientX:0,clientY:0}))");
+   check('in-flight submission stays visible',await js("$('enqueueconfirm').open"));
+   await js("window.__rejectQueue(new Error('fixture offline'))");await sleep(80);
+   check('request failure preserves selection and retry',await js("$('enqueueconfirm').open&&!$('enqueue-error').hidden&&$('enqueue-error').textContent==='fixture offline'&&selection.size===3&&!$('enqueue-submit').disabled"));
+   await js("$('enqueue-submit').click();window.__resolveQueue({added:['fixture'],skipped:[]})");await sleep(300);
+   check('success enters queue subpage',await js("!$('enqueueconfirm').open&&selection.size===0&&douyinPage==='queue'&&!$('queuepanel').hidden"));
+   check('submitted IDs are the confirmed snapshot',await js("JSON.stringify(window.__requests[1].ids)===JSON.stringify(window.__fixtureIDs)"));
+   await js("api=window.__queueAPI;true");check('no queue UI console errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,checks},null,2));await desk.quit();return;
+  }
   if(process.env.WORKDESK_SMOKE_SCOPE==='rail-order'){
    desk.show();await sleep(200);await js("updateNavigationMotion('on')");
+   await js("selectModule('douyin',{animate:false});window.__toggleCalls=0;window.__originalToggle=toggleNavigation;toggleNavigation=(...args)=>{window.__toggleCalls++;return window.__originalToggle(...args)};true");
+   const rapidPoint=await js("(()=>{const r=$('douyinmodule').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+   wc.sendInputEvent({type:'mouseMove',...rapidPoint});wc.sendInputEvent({type:'mouseDown',...rapidPoint,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...rapidPoint,button:'left',clickCount:1});await sleep(280);
+   wc.sendInputEvent({type:'mouseDown',...rapidPoint,button:'left',clickCount:1});await sleep(100);wc.sendInputEvent({type:'mouseUp',...rapidPoint,button:'left',clickCount:1});await navigationSettled();
+   log.info('RAPID_PRIMARY_CLICKS '+await js('window.__toggleCalls'));
+   check('two rapid native clicks toggle exactly twice',await js('window.__toggleCalls'),2);
+   await js("toggleNavigation=window.__originalToggle;delete window.__originalToggle;delete window.__toggleCalls;selectModule('home',{animate:false})");
    const homeOrderBefore=await js('JSON.stringify(homeOrder)'),jobsBefore=await js('JSON.stringify(state.jobs)');
    const point=async id=>js(`(()=>{const r=railButton('${id}').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()`);
    for(const mode of ['night','day'])for(const [width,height] of [[1180,760],[800,560]]){
@@ -51,7 +113,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     const from=await point('health'),to=await point('home');
     wc.sendInputEvent({type:'mouseMove',...from});wc.sendInputEvent({type:'mouseDown',...from,button:'left',clickCount:1});await sleep(180);
     check(`${mode} ${width}: short hold does not enter sorting`,await js('!railDrag?.active'));
-    await sleep(350);check(`${mode} ${width}: long hold lifts the icon without switching module`,await js("railDrag?.active&&currentModule==='home'&&getComputedStyle(railDrag.button).visibility==='hidden'"));
+    await sleep(150);check(`${mode} ${width}: long hold lifts the icon without switching module`,await js("railDrag?.active&&currentModule==='home'&&getComputedStyle(railDrag.button).visibility==='hidden'"));
     wc.sendInputEvent({type:'mouseMove',...to,modifiers:['leftButtonDown']});await sleep(80);
     check(`${mode} ${width}: drop slot swaps exactly two modules`,await js("JSON.stringify(railOrder)===JSON.stringify(['health','douyin','purchases','home'])"));
     const order=await js('JSON.stringify(railOrder)');await sleep(400);
@@ -63,14 +125,61 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    await wc.reload();await sleep(800);
    check('saved module order survives renderer reload',await js("railOrder[0]==='health'&&document.getElementById('modules').firstElementChild.id==='healthmodule'"));
    const from=await point('health'),to=await point('purchases'),before=await js('JSON.stringify(railOrder)');
-   wc.sendInputEvent({type:'mouseMove',...from});wc.sendInputEvent({type:'mouseDown',...from,button:'left',clickCount:1});await sleep(520);wc.sendInputEvent({type:'mouseMove',...to,modifiers:['leftButtonDown']});await sleep(70);
+   wc.sendInputEvent({type:'mouseMove',...from});wc.sendInputEvent({type:'mouseDown',...from,button:'left',clickCount:1});await sleep(320);wc.sendInputEvent({type:'mouseMove',...to,modifiers:['leftButtonDown']});await sleep(70);
    await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");wc.sendInputEvent({type:'mouseUp',...to,button:'left',clickCount:1});await sleep(400);
    check('Escape restores previous order without persistence',await js('JSON.stringify(railOrder)'),before);
    const click=await point('purchases');wc.sendInputEvent({type:'mouseMove',...click});wc.sendInputEvent({type:'mouseDown',...click,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...click,button:'left',clickCount:1});await sleep(250);
    check('ordinary click still opens its module',await js("currentModule==='purchases'&&!railDrag"));
+   check('dedicated bottom fold button is removed',await js("document.getElementById('navtoggle')===null"));
+   check('primary controls point to the secondary panel',await js("['douyinmodule','purchasemodule','healthmodule'].every(id=>document.getElementById(id).getAttribute('aria-controls')==='modulepanel')"));
+   for(const width of [1180,800])for(const name of ['douyin','purchases','health']){
+    w.setContentSize(width,720);await sleep(200);await js("selectModule('home',{animate:false})");
+    const target=await point(name);
+    const click=async()=>{wc.sendInputEvent({type:'mouseMove',...target});wc.sendInputEvent({type:'mouseDown',...target,button:'left',clickCount:1});await sleep(60);wc.sendInputEvent({type:'mouseUp',...target,button:'left',clickCount:1});await navigationSettled()};
+    await click();check(`${width}/${name}: first primary click opens its panel`,await js(`currentModule==='${name}'&&!document.getElementById('modulepanel').inert`));
+    await click();check(`${width}/${name}: second primary click folds its panel`,await js("document.getElementById('modulepanel').inert"));
+    await click();check(`${width}/${name}: third primary click reopens its panel`,await js("!document.getElementById('modulepanel').inert"));
+   }
    check('rail sort does not change homepage order or jobs',await js('JSON.stringify(homeOrder)')===homeOrderBefore&&await js('JSON.stringify(state.jobs)')===jobsBefore);
    check('rail sorting has no renderer errors',errors.length,0);
    fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'rail-order',checks},null,2));await desk.quit();return;
+  }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='motion-lifecycle'){
+   desk.show();await sleep(200);await js("updateNavigationMotion('on')");
+   const records=await js('JSON.stringify({jobs:state.jobs,home:homeOrder,rail:railOrder})');
+   for(const mode of ['night','day']){
+    await js(`paintAppearance('${mode}')`);
+    const noLayoutReads=await js("(()=>{const nodes=[...$('home-cards').children,...RAIL_IDS.map(railButton)],original=nodes.map(n=>n.getBoundingClientRect);let reads=0;try{nodes.forEach((n,i)=>n.getBoundingClientRect=()=>{reads++;return original[i].call(n)});applyHomeOrder(homeOrder);applyRailOrder(railOrder);return reads===0}finally{nodes.forEach((n,i)=>n.getBoundingClientRect=original[i])}})()");
+    check(mode+': nonanimated layout sync does not measure every tile',noLayoutReads);
+    for(const name of ['douyin','purchases','health','home','health','douyin','home']){
+     await js(`selectModule('${name}')`);await sleep(35);
+     check(mode+'/'+name+': only active view retains an entrance animation',await js("moduleViewAnimations.size<=1&&[...moduleViewAnimations.keys()].every(el=>el.id===moduleRegistry[currentModule].view&&!el.hidden)"));
+    }
+    await sleep(350);
+    check(mode+': page entrance layers are released',await js('moduleViewAnimations.size===0'));
+    const summary=await js("(()=>{renderHomepageSummary();const el=$('home-purchases-summary'),node=el.firstElementChild;renderHomepageSummary();return node===el.firstElementChild})()");
+    check(mode+': unchanged purchase summary keeps its DOM',summary);
+    await js("$('tools').showModal()");await sleep(50);
+    const motion=await js("(()=>{const s=getComputedStyle($('tools'));return {name:s.animationName,duration:parseFloat(s.animationDuration),modal:$('tools').matches(':modal'),focus:$('tools').contains(document.activeElement)}})()");
+    check(mode+': dialog uses gentle shared entry and retains modal focus',motion.modal&&motion.focus&&(motion.name==='sheet-enter'?motion.duration>=.29:motion.name==='none'));
+    await js("$('tools').close();selectModule('home',{animate:false});window.__motionHomeBefore=[...homeOrder];applyHomeOrder([...homeOrder].reverse(),true)");await sleep(60);
+    const continuity=await js("(()=>{const cards=[...$('home-cards').children],before=cards.map(c=>c.getBoundingClientRect());applyHomeOrder(window.__motionHomeBefore,true);const after=cards.map(c=>c.getBoundingClientRect());return Math.max(...before.map((r,i)=>Math.hypot(r.left-after[i].left,r.top-after[i].top)))})()");
+    check(mode+': rapid home reorder resumes from visible positions',continuity<2);await sleep(350);
+    check(mode+': home reorder animations release all layers',await js("!homeFlipAnimations.size&&[...$('home-cards').children].every(c=>!c.style.willChange)"));
+    await js("window.__motionRailBefore=[...railOrder];applyRailOrder([...railOrder].reverse(),true)");await sleep(60);
+    const railContinuity=await js("(()=>{const buttons=RAIL_IDS.map(railButton),before=buttons.map(b=>b.getBoundingClientRect().top);applyRailOrder(window.__motionRailBefore,true);return Math.max(...buttons.map((b,i)=>Math.abs(b.getBoundingClientRect().top-before[i])))})()");
+    check(mode+': rapid rail reorder resumes from visible positions',railContinuity<2);await sleep(300);
+    check(mode+': rail reorder animations release all layers',await js('railMoves.size===0'));
+    await js("railDrag={active:true,id:railOrder[0],button:railButton(railOrder[0]),before:[...railOrder],pointerId:999};applyRailOrder([...railOrder].reverse(),true)");await sleep(60);
+    const releaseContinuity=await js("(()=>{const button=railDrag.button,others=RAIL_IDS.map(railButton).filter(b=>b!==button),before=others.map(b=>b.getBoundingClientRect().top);finishRailDrag(true);return Math.max(...others.map((b,i)=>Math.abs(b.getBoundingClientRect().top-before[i])))})()");
+    check(mode+': releasing or cancelling rail drag does not snap moving neighbors',releaseContinuity<2);await sleep(300);
+    await js("selectModule('health');updateNavigationMotion('off')");
+    check(mode+': disabling app motion cancels the current page entrance',await js("!moduleViewAnimations.size&&!moduleGlyphAnimations.size&&!railGlyphAnimations.size"));
+    await js("selectModule('home');updateNavigationMotion('on')");
+   }
+   check('motion checks preserve jobs and both saved layouts',await js('JSON.stringify({jobs:state.jobs,home:homeOrder,rail:railOrder})'),records);
+   check('motion lifecycle has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'motion-lifecycle',checks},null,2));await desk.quit();return;
   }
   if(process.env.WORKDESK_SMOKE_SCOPE==='home-sort'){
    desk.show();await sleep(200);await js("updateNavigationMotion('on')");
@@ -84,6 +193,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     check(`${mode} ${width}: fixed target slot receives dragged card`,await js("homeDrag?.active&&homeOrder[2]==='next'&&document.querySelector('[data-home-card=next]').classList.contains('home-card-placeholder')"));
     const trace=await js("new Promise(resolve=>{const orders=new Set(),g=document.getElementById('home-cards');let mutations=0,frames=0;const observer=new MutationObserver(list=>{mutations+=list.length});observer.observe(g,{childList:true});const start=performance.now();function tick(){orders.add(JSON.stringify(homeOrder));frames++;if(performance.now()-start<550)requestAnimationFrame(tick);else{observer.disconnect();resolve({orders:orders.size,mutations,frames})}}requestAnimationFrame(tick)})");
     check(`${mode} ${width}: stationary pointer never oscillates or reorders DOM`,trace.orders===1&&trace.mutations===0&&trace.frames>5);
+    check(`${mode} ${width}: stationary drag has no pending frame loop`,await js('homeDrag?.frame===0'));
     check(`${mode} ${width}: no duplicate exposed card while dragging`,await js("getComputedStyle(homeDrag.card).visibility==='hidden'&&getComputedStyle(homeDrag.ghost).visibility==='visible'"));
     wc.sendInputEvent({type:'mouseUp',...points.to,button:'left',clickCount:1});await sleep(70);
     check(`${mode} ${width}: landing keeps one preview without opacity fade`,await js("homeLandingGhosts.size===1&&[...homeLandingGhosts][0].getAnimations().every(a=>a.effect.getKeyframes().every(k=>!('opacity' in k)))"));
@@ -129,6 +239,95 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    check('readability scope has no renderer errors',errors.length,0);
    await capture(path.join(fixture,'queue-page.png'));
    fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'readability',checks},null,2));await desk.quit();return;
+  }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='health-hover'){
+   desk.show();await sleep(150);await js("selectModule('health',{animate:false});updateNavigationMotion('off')");
+   for(const [day,value] of [['2025-01-01','90'],['2025-01-05','89.8'],['2025-01-10','89.5']])await js(`api('health_save',{day:'${day}',value:'${value}',unit:'kg'})`);
+   await js('refreshHealth()');const baseline=await js('JSON.stringify(healthState.records)');
+   for(const mode of ['night','day'])for(const width of [800,1180]){
+    w.setContentSize(width,760);await sleep(100);
+    await js(`paintAppearance('${mode}');healthUnit='kg';renderHealth();renderHealthHome();document.querySelector('.health-trend').scrollIntoView({block:'start'})`);await sleep(100);
+    const point=await js("(()=>{const svg=document.querySelector('.health-trend svg'),p=svg.querySelectorAll('circle')[1],at=svg.createSVGPoint();at.x=Number(p.getAttribute('cx'));at.y=Number(p.getAttribute('cy'));const r=at.matrixTransform(svg.getScreenCTM());return {x:Math.round(r.x),y:Math.round(r.y-16)}})()");
+    wc.sendInputEvent({type:'mouseMove',...point});await sleep(80);
+    check(`${mode}/${width}: near the main line shows date and exact weight immediately`,await js("!$('weight-point-tooltip').hidden&&$('weight-point-tooltip').textContent==='2025-01-05 · 89.8 公斤 · 179.6 斤'"));
+    check(`${mode}/${width}: selected main point and guide are visible`,await js("document.querySelectorAll('.health-trend .weight-point-active').length===1&&!document.querySelector('.health-trend .weight-hover-guide').hasAttribute('hidden')"));
+    check(`${mode}/${width}: tooltip stays inside the viewport`,await js("(()=>{const r=$('weight-point-tooltip').getBoundingClientRect();return r.left>=7&&r.right<=innerWidth-7&&r.top>=7&&r.bottom<=innerHeight-7})()"));
+    check(`${mode}/${width}: no competing native tooltip`,await js("document.querySelectorAll('.health-trend svg title').length===0"));
+    if(width===1180)await capture(path.join(fixture,'health-hover-'+mode+'.png'));
+    wc.sendInputEvent({type:'mouseMove',x:10,y:10});await sleep(60);
+    check(`${mode}/${width}: leaving the plot dismisses hover`,await js("$('weight-point-tooltip').hidden"));
+    await js("document.querySelector('.health-trend .weight-chart-interactive').focus();document.querySelector('.health-trend .weight-chart-interactive').dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true}))");
+    check(`${mode}/${width}: keyboard can inspect the first measurement`,await js("$('weight-point-tooltip').textContent==='2025-01-01 · 90 公斤 · 180 斤'"));
+    await js("document.querySelector('.health-trend .weight-chart-interactive').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+    check(`${mode}/${width}: keyboard steps to the next date`,await js("$('weight-point-tooltip').textContent.startsWith('2025-01-05')"));
+    await js("document.querySelector('.health-trend .weight-chart-interactive').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    check(`${mode}/${width}: Escape clears the tooltip`,await js("$('weight-point-tooltip').hidden&&!document.querySelector('.health-trend .weight-point-active')"));
+    await js("healthUnit='jin';renderHealth();(()=>{const c=document.querySelector('.health-trend .weight-chart-interactive');c.focus();showWeightPoint(c,1)})()");
+    check(`${mode}/${width}: display units follow the selected unit`,await js("$('weight-point-tooltip').textContent==='2025-01-05 · 179.6 斤 · 89.8 公斤'"));
+    await js("renderHealth()");
+    check(`${mode}/${width}: re-render clears stale chart tooltip`,await js("$('weight-point-tooltip').hidden&&weightHoverChart===null"));
+   }
+   check('main chart inspection never changes measurements',await js('JSON.stringify(healthState.records)'),baseline);
+   check('main chart inspection has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'health-hover',checks},null,2));await desk.quit();return;
+  }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='health-chart'){
+   desk.show();await sleep(150);
+   await js("updateNavigationMotion('off');selectModule('health',{animate:false})");
+   for(const [day,value] of [['2025-01-01','90'],['2025-01-05','89.8'],['2025-01-10','89.5']])await js(`api('health_save',{day:'${day}',value:'${value}',unit:'kg'})`);
+   await js('refreshHealth()');
+   const records=await js('JSON.stringify(healthState.records)'),jobs=await js('JSON.stringify(state.jobs)');
+   for(const mode of ['night','day'])for(const [width,height] of [[800,560],[1180,760],[1440,900]]){
+    w.setContentSize(width,height);await sleep(120);await js(`paintAppearance('${mode}');panelCollapsed=false;compactPanelOpen=true;document.body.classList.remove('panel-collapsed');updateNavigationToggle()`);
+    for(const folded of [false,true]){
+     if(folded)await js('toggleNavigation()');
+     const m=await js("(()=>{const svg=document.querySelector('.health-trend .weight-chart'),r=svg.getBoundingClientRect(),p=svg.parentElement,s=getComputedStyle(p),ctm=svg.getScreenCTM(),mini=$('home-health-summary').querySelector('.weight-chart-mini');return {width:r.width,height:r.height,available:p.clientWidth-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight),scaleX:ctm.a,scaleY:ctm.d,points:svg.querySelectorAll('circle').length,miniHeight:parseFloat(getComputedStyle(mini).height),miniViewBox:mini.getAttribute('viewBox')}})()");
+     log.info('CHART_SIZE '+JSON.stringify({mode,windowWidth:width,folded,...m}));
+     check(`${mode}/${width}/${folded}: main chart fills content width`,Math.abs(m.width-m.available)<2);
+     check(`${mode}/${width}/${folded}: chart uses its intrinsic ratio instead of icon height`,m.height>100&&Math.abs(m.width/m.height-640/220)<.02);
+     check(`${mode}/${width}/${folded}: chart text and points are not stretched`,Math.abs(m.scaleX-m.scaleY)<.001&&m.points===3);
+     check(`${mode}/${width}/${folded}: axis text does not inherit icon outlines`,await js("[...document.querySelectorAll('.health-trend .weight-chart text')].every(t=>getComputedStyle(t).stroke==='none')"));
+     check(`${mode}/${width}/${folded}: homepage sparkline keeps its compact geometry`,m.miniHeight===54&&m.miniViewBox==='0 0 640 70');
+    }
+    if(width===1180)await capture(path.join(fixture,'health-chart-'+mode+'.png'));
+   }
+   check('chart sizing preserves measurements and jobs',await js('JSON.stringify(healthState.records)')===records&&await js('JSON.stringify(state.jobs)')===jobs);
+   check('chart sizing has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'health-chart',checks},null,2));await desk.quit();return;
+  }
+  if(process.env.WORKDESK_SMOKE_SCOPE==='health-sync'){
+   const source='处理文件/测试主题/同步体重.md',note=path.join(fixture,'vault',source),configFile=path.join(fixture,'homepage.json');
+   const config=JSON.parse(fs.readFileSync(configFile,'utf8'));config.sources.push({id:'profile',path:source});fs.writeFileSync(configFile,JSON.stringify(config));
+   const day=await js('localDate()');
+   const writeWeight=value=>fs.writeFileSync(note,`| 身高 / 体重 | 180cm / ${value}kg（体重秤；用户${day}报告；上次2025-01-01：89kg） |`);
+   writeWeight('90.125');
+   const jobs=await js('JSON.stringify(state.jobs)'),order=await js('JSON.stringify(homeOrder)');
+   await js("selectModule('health',{animate:false});refreshHealth()");
+   check('opening health remains a read-only operation',await js('healthState.records.length===0'));
+   await js("window.__healthAPI=api;window.__heldRead=false;window.__healthSyncCalls=0;api=(name,...args)=>{if(name==='health_sync')window.__healthSyncCalls++;if(name==='health'&&!window.__heldRead){window.__heldRead=true;return new Promise((resolve,reject)=>{window.__releaseHealthRead=()=>window.__healthAPI(name,...args).then(resolve,reject)})}return window.__healthAPI(name,...args)};void refreshHealth();$('health-refresh').click()");
+   check('manual sync waits behind an in-flight read instead of being dropped',await js('healthBusy&&window.__healthSyncCalls===0'));
+   await js('void window.__releaseHealthRead()');await sleep(180);
+   for(let i=0;i<50;i++){if(await js('!healthBusy&&window.__healthSyncCalls===1'))break;await sleep(50)}
+   check('queued manual refresh executes once after the read',await js('window.__healthSyncCalls===1&&healthSyncResult?.added===1'));
+   await js('api=window.__healthAPI;void 0');
+   const refreshWeight=async()=>{await js("$('health-refresh').click()");await sleep(120);for(let i=0;i<50;i++){if(await js('!healthBusy'))return;await sleep(50)}throw Error('Weight sync did not settle')};
+   check('real refresh button imports explicitly dated note',await js("healthState.records.length===1&&healthState.records[0].grams===90125"));
+   check('new measurement reaches the page and home card',await js("document.querySelector('.weight-current').textContent.startsWith('90.125')&&$('home-health-summary').textContent.includes('90.125')"));
+   check('page and home identify knowledge-note provenance',await js("document.querySelector('.health-summary').textContent.includes('知识库记录')&&$('home-health-summary').textContent.includes('知识库记录')"));
+   check('sync result exposes addition and source path',await js("$('healthview').querySelector('[role=status]').textContent.includes('新增 1 条')&&healthSyncResult.source==='处理文件/测试主题/同步体重.md'"));
+   const original=await js('JSON.stringify(healthState.records)');
+   await refreshWeight();
+   check('repeated refresh keeps identity and revision',await js('JSON.stringify(healthState.records)'),original);
+   check('repeated refresh explains the unchanged count',await js('healthSyncResult.added===0&&healthSyncResult.existing===1'));
+   writeWeight('91');await refreshWeight();
+   check('conflicting note never overwrites saved measurement',await js('JSON.stringify(healthState.records)'),original);
+   check('same-day conflict displays both values without auto-selection',await js("healthSyncResult.conflicts.length===1&&$('healthview').querySelector('[role=status]').textContent.includes('91公斤')&&$('healthview').querySelector('[role=status]').textContent.includes('90.125公斤')&&$('healthview').querySelector('[role=status]').textContent.includes('未覆盖')"));
+   fs.unlinkSync(note);await refreshWeight();
+   check('missing source keeps previous measurements',await js('JSON.stringify(healthState.records)'),original);
+   check('missing source reports failure instead of success',await js("$('toast').textContent.includes('读取失败')&&!$('health-refresh').disabled"));
+   check('health sync never changes jobs or homepage layout',await js('JSON.stringify(state.jobs)')===jobs&&await js('JSON.stringify(homeOrder)')===order);
+   check('health sync has no renderer errors',errors.length,0);
+   fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'health-sync',checks},null,2));await desk.quit();return;
   }
   if(process.env.WORKDESK_SMOKE_SCOPE==='health'){
    await js("refreshHealth()");
@@ -212,7 +411,21 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    log.info(`Health native smoke: ${checks.length} checks passed`);await desk.quit();return;
   }
   if(process.env.WORKDESK_SMOKE_SCOPE==='performance'){
+    await js("refresh().then(()=>{window.pollProbe={state:0,home:0};window.probeFetch=window.fetch;window.fetch=(url,...args)=>{if(url==='/api/state')pollProbe.state++;if(url==='/api/home')pollProbe.home++;return probeFetch(url,...args)}})");
+    // Restore production visibility behavior; unthrottled fixtures stay "visible" when hidden.
+    wc.setBackgroundThrottling(true);w.hide();await sleep(200);
+    check('hidden fixture uses production visibility state',await js('document.hidden'));
+    await sleep(16500);
+    check('hidden native window stops full state polling',await js('pollProbe.state'),0);
+    check('hidden native window stops homepage polling',await js('pollProbe.home'),0);
+    w.show();await sleep(750);
+    check('restoring native window refreshes local state immediately',await js('pollProbe.state>0'));
+    check('restoring homepage rereads its local source metadata',await js('pollProbe.home>0'));
+    wc.setBackgroundThrottling(false);
+    await js('window.fetch=window.probeFetch;delete window.probeFetch;delete window.pollProbe');
     await js("selectModule('douyin',{animate:false});updateNavigationMotion('on')");await navigationSettled();
+    const tracing=process.env.WORKDESK_TRACE_MOTION==='1';
+    if(tracing)await require('electron').contentTracing.startRecording({included_categories:['devtools.timeline','blink','cc','disabled-by-default-devtools.timeline']});
     const probes=[];
     for(const mode of ['day','night']){
      await js(`paintAppearance('${mode}')`);await sleep(150);
@@ -220,15 +433,32 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
       const probe=await js(`(async()=>{
        const intervals=[],tasks=[],samples=[],cards=[...document.querySelectorAll('.card')];
        const observer=new PerformanceObserver(list=>tasks.push(...list.getEntries().map(e=>e.duration)));observer.observe({type:'longtask'});
-       let last=performance.now(),start=last;toggleNavigation();
+       let last=performance.now(),start=last;toggleNavigation();const activeCards=navigationAnimations.filter(a=>a.effect?.target?.matches('.card')).length;
        await new Promise(resolve=>{const tick=now=>{intervals.push(now-last);last=now;const r=cards[0].getBoundingClientRect();samples.push([r.left,r.width]);if(now-start<750)requestAnimationFrame(tick);else resolve()};requestAnimationFrame(tick)});
-       observer.disconnect();return {frames:intervals.length,max:Math.max(...intervals),over33:intervals.filter(x=>x>33).length,longTasks:tasks,distinct:new Set(samples.map(x=>x.map(n=>Math.round(n)).join(','))).size,identity:cards.every((c,i)=>c===document.querySelectorAll('.card')[i]),clean:!navigationReflow};
+       observer.disconnect();return {activeCards,frames:intervals.length,max:Math.max(...intervals),over33:intervals.filter(x=>x>33).length,longTasks:tasks,distinct:new Set(samples.map(x=>x.map(n=>Math.round(n)).join(','))).size,identity:cards.every((c,i)=>c===document.querySelectorAll('.card')[i]),clean:!navigationReflow};
       })()`);probes.push({mode,run,...probe});await navigationSettled();
      }
     }
     fs.writeFileSync(path.join(fixture,'performance.json'),JSON.stringify(probes,null,2));log.info('PERFORMANCE '+JSON.stringify(probes));
+    if(tracing)await require('electron').contentTracing.stopRecording(path.join(fixture,'motion-trace.json'));
+    const mixed=[];
+    for(const name of ['home','douyin','purchases','health']){
+     await js(`selectModule('${name==='home'?'health':'home'}',{animate:false})`);await navigationSettled();
+     const probe=await js(`(async()=>{const frames=[],start=performance.now();let last=start;document.getElementById(moduleRegistry['${name}'].button).click();await new Promise(resolve=>{const tick=now=>{frames.push(now-last);last=now;if(now-start<750)requestAnimationFrame(tick);else resolve()};requestAnimationFrame(tick)});return {name:'${name}',frames:frames.length,max:Math.max(...frames),module:currentModule}})()`);
+     mixed.push(probe);await navigationSettled();
+    }
+    check('all primary module switches remain animated and select their target',mixed.every(p=>p.frames>20&&p.module===p.name));
+    await js("selectModule('douyin',{animate:false});document.querySelector('.workspace').scrollTop=600");await sleep(150);
+    const anchor=await js("(()=>{const ws=document.querySelector('.workspace'),edge=ws.getBoundingClientRect().top;const card=[...document.querySelectorAll('.card')].find(c=>c.getBoundingClientRect().bottom>edge);return {id:card.dataset.id,top:card.getBoundingClientRect().top}})()");
+    await js('toggleNavigation()');await navigationSettled();
+    const anchorAfter=await js(`({top:document.querySelector('[data-id="${anchor.id}"]').getBoundingClientRect().top,scroll:document.querySelector('.workspace').scrollTop})`);
+    log.info('SCROLL_ANCHOR '+JSON.stringify({before:anchor,after:anchorAfter}));
+    check('scrolled navigation preserves its first visible work',Math.abs(anchorAfter.top-anchor.top)<2);
+    check('scrolled navigation restores normal flow',await js("!navigationReflow&&document.querySelector('.workspace-content').getAnimations().length===0"));
+    log.info('MODULE_MOTION '+JSON.stringify(mixed));
     check('performance samples preserve real card identity and restore flow',probes.every(p=>p.identity&&p.clean));
     check('every native motion run samples at least 21 frames',probes.every(p=>p.frames>20));
+    check('only visible cards allocate navigation effects',probes.every(p=>p.activeCards>0&&p.activeCards<30));
     fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,checks}));await desk.quit();return;
    }
   if(process.env.WORKDESK_SMOKE_SCOPE==='shell'){
@@ -365,8 +595,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   const homeOrderBefore=await js('JSON.stringify(homeOrder)');
   await js("document.querySelector('[data-home-card=purchases] .module-entry').click()");await sleep(250);
   check('purchase homepage entry reaches its real module',await js("currentModule==='purchases'&&!document.getElementById('purchaseview').hidden"));
-  check('purchase module uses its own real secondary navigation',await js("!document.getElementById('panelhost').hidden&&!document.getElementById('purchasenav').hidden&&!document.getElementById('navtoggle').hidden&&document.getElementById('douyinnav').hidden"));
-  check('purchase detail connects directly to its navigation',await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.querySelector('.module-panel').getBoundingClientRect().right)<1"));
+  check('purchase module uses its own real secondary navigation',await js("!document.getElementById('panelhost').hidden&&!document.getElementById('purchasenav').hidden&&document.getElementById('douyinnav').hidden"));
+  check('purchase detail connects directly to its navigation',await js("Math.abs(document.querySelector('.workspace-content').getBoundingClientRect().left-document.querySelector('.module-panel').getBoundingClientRect().right)<1"));
   await js("document.getElementById('purchase-new').click();document.getElementById('purchase-title').value='合成购买事项';document.getElementById('purchase-title').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('purchase-needs').value='轻便，排除旧款';document.getElementById('purchase-budget').value='100元';document.getElementById('purchase-status').value='waiting';document.getElementById('purchase-origin').value='advice';document.getElementById('purchase-conclusion').value='等待正式资料';document.getElementById('purchase-wait_condition').value='公布后核对';document.getElementById('purchase-editor-close').click()");
   check('dirty close retains edits with explicit discard choice',await js("document.getElementById('purchaseeditor').open&&!document.getElementById('purchase-discard').hidden&&document.getElementById('purchase-title').value==='合成购买事项'"));
   await js("document.getElementById('purchase-discard-keep').click();document.getElementById('purchase-candidate-add').click();document.querySelector('[data-candidate-field=name]').value='合成候选';document.querySelector('[data-candidate-field=price]').value='90元';document.querySelector('[data-candidate-field=checked_at]').value='2025-01-01';document.getElementById('purchaseform').requestSubmit()");
@@ -416,7 +646,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     for(const [width,height] of [[1440,920],[800,560]]){
      w.setContentSize(width,height);await sleep(150);await navigationSettled();
      if(width===800&&await js('!compactPanelOpen')){await js('toggleNavigation()');await navigationSettled()}
-     check(`${mode} ${width}: decision panel and detail stay connected without overflow`,await js("(()=>{const ws=document.querySelector('.workspace'),p=document.querySelector('.module-panel');return !p.inert&&Math.abs(ws.getBoundingClientRect().left-p.getBoundingClientRect().right)<1&&ws.scrollWidth<=ws.clientWidth&&document.documentElement.scrollWidth<=innerWidth})()"));
+     check(`${mode} ${width}: decision panel and detail stay connected without overflow`,await js("(()=>{const ws=document.querySelector('.workspace'),p=document.querySelector('.module-panel');return !p.inert&&Math.abs(document.querySelector('.workspace-content').getBoundingClientRect().left-p.getBoundingClientRect().right)<1&&ws.scrollWidth<=ws.clientWidth&&document.documentElement.scrollWidth<=innerWidth})()"));
      await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,`purchase-detail-${mode}-${width}.png`),img.toPNG()));
     }
    }
@@ -518,6 +748,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("document.querySelector('.workspace').scrollTop=0");
   check('no Node in renderer',await js("typeof require==='undefined' && typeof process==='undefined'"));
   const pref=wc.getLastWebPreferences();check('sandbox enabled',pref.sandbox);check('context isolation enabled',pref.contextIsolation);check('Node integration disabled',pref.nodeIntegration,false);
+  desk.show();await sleep(200);
+  log.info('CAPTION_STATE '+JSON.stringify({visible:w.isVisible(),minimized:w.isMinimized(),renderer:await js("({visibility:document.visibilityState,overlay:navigator.windowControlsOverlay.visible})")}));
   check('native caption buttons overlay page',await js('navigator.windowControlsOverlay.visible'));
   check('integrated drag strip is forty pixels',await js("document.querySelector('.window-chrome').getBoundingClientRect().height"),40);
   check('title strip can drag window',await js("getComputedStyle(document.querySelector('.window-chrome')).getPropertyValue('app-region')"),'drag');
@@ -530,7 +762,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   // A late visibility switch can hide an entire otherwise-correct fade.
   for(const width of [1440,960]){
    w.setContentSize(width,720);await navigationSettled();
-   if(await js("document.getElementById('navtoggle').getAttribute('aria-expanded')==='true'")){await js('toggleNavigation()');await navigationSettled()}
+   if(await js("document.getElementById('douyinmodule').getAttribute('aria-expanded')==='true'")){await js('toggleNavigation()');await navigationSettled()}
    // Sample the middle of the 360ms text fade. A capture near its leading edge
    // may still be the compositor's preceding dark frame; it is not a no-text bug.
    await js('toggleNavigation()');await sleep(180);
@@ -564,8 +796,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    w.setContentSize(width,720);await navigationSettled();
    for(const reverse of [false,false,true]){
     const frames=await js(`(async()=>{
-     const ws=document.querySelector('.workspace'),button=document.getElementById('navtoggle');
-     const sample=()=>{const r=ws.getBoundingClientRect(),s=getComputedStyle(ws);return {right:r.right,viewport:innerWidth,left:r.left,gutter:ws.offsetWidth-ws.clientWidth,transform:s.transform,color:s.scrollbarColor,overflow:document.documentElement.scrollWidth>innerWidth}};
+     const ws=document.querySelector('.workspace'),button=document.getElementById('douyinmodule');
+     const sample=()=>{const r=ws.getBoundingClientRect(),s=getComputedStyle(ws);return {right:r.right,viewport:innerWidth,left:document.querySelector('.workspace-content').getBoundingClientRect().left,scrollLeft:r.left,gutter:ws.offsetWidth-ws.clientWidth,transform:s.transform,color:s.scrollbarColor,overflow:document.documentElement.scrollWidth>innerWidth}};
      const frames=[sample()];button.click();const start=performance.now();let reversed=false;
      await new Promise(resolve=>{const tick=now=>{frames.push(sample());if(${reverse}&&!reversed&&now-start>70){button.click();reversed=true}if(now-start<650)requestAnimationFrame(tick);else resolve()};requestAnimationFrame(tick)});
      return frames;
@@ -576,11 +808,12 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     // A one-CSS-pixel quantization is not a change from 10px to native 15px.
     check(`${width}/${reverse}: native scrollbar gutter stable within integer rounding`,frames.every(f=>Math.abs(f.gutter-frames[0].gutter)<=1));
     check(`${width}/${reverse}: scroll frame never translated or restyled`,frames.every(f=>f.transform==='none'&&f.color==='auto'&&!f.overflow));
+    check(`${width}/${reverse}: scroll frame never relayouts horizontally`,frames.every(f=>Math.abs(f.scrollLeft-72)<1));
     check(`${width}/${reverse}: animation actually samples intermediate positions`,frames.length>5&&frames.some(f=>Math.abs(f.left-72)>1&&Math.abs(f.left-312)>1));
    }
   }
   w.setContentSize(1440,920);await navigationSettled();
-  if(await js("document.getElementById('modulepanel').inert")){await js("document.getElementById('navtoggle').click()");await navigationSettled()}
+  if(await js("document.getElementById('modulepanel').inert")){await js("document.getElementById('douyinmodule').click()");await navigationSettled()}
   check('no floating navigation dialog',await js("document.getElementById('navdrawer')===null"));
   const originalPanel=await js("document.getElementById('modulepanel').parentElement.id");
   for(const width of [1080,960,800]){
@@ -589,12 +822,12 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    const actualWidth=await js('innerWidth');if(actualWidth!==width){w.setContentSize(width-(actualWidth-width),720);await sleep(220)}
    await navigationSettled();check(`${width}: viewport within native inset tolerance`,Math.abs(await js('innerWidth')-width)<=2);
    check(`${width}: compact panel starts closed`,await js("document.getElementById('modulepanel').inert"));
-   await js("document.getElementById('navtoggle').click()");await navigationSettled();
+   await js("document.getElementById('douyinmodule').click()");await navigationSettled();
     const join=await js("({left:document.getElementById('modulepanel').getBoundingClientRect().left,rail:document.querySelector('.module-rail').getBoundingClientRect().right})");
     console.log('NATIVE_PANEL_JOIN',JSON.stringify({width,...join}));
     // Fractional Windows display scales can leave sub-pixel transform rounding.
     check(`${width}: panel joined to rail`,Math.abs(join.left-join.rail)<1);
-   check(`${width}: content sits beside panel`,await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-document.getElementById('modulepanel').getBoundingClientRect().right)<1"));
+   check(`${width}: content sits beside panel`,await js("Math.abs(document.querySelector('.workspace-content').getBoundingClientRect().left-document.getElementById('modulepanel').getBoundingClientRect().right)<1"));
    check(`${width}: navigation never opens a modal`,await js("!document.querySelector('dialog:modal')"));
    check(`${width}: navigation does not lock or blur content`,await js("getComputedStyle(document.querySelector('.workspace')).overflowY==='auto'&&getComputedStyle(document.querySelector('.workspace')).filter==='none'&&getComputedStyle(document.querySelector('.workspace')).backdropFilter==='none'"));
    check(`${width}: scrollbar reaches viewport edge`,await js("Math.abs(document.querySelector('.workspace').getBoundingClientRect().right-innerWidth)<1"));
@@ -602,37 +835,37 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    check(`${width}: panel remains in original host`,await js("document.getElementById('modulepanel').parentElement.id"),originalPanel);
    if(width===960)await wc.capturePage().then(img=>fs.writeFileSync(path.join(app.getPath('userData'),'native-compact-open.png'),img.toPNG()));
    await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await navigationSettled();
-   check(`${width}: Escape closes and restores rail focus`,await js("document.getElementById('modulepanel').inert&&document.activeElement.id==='navtoggle'"));
+   check(`${width}: Escape closes and restores rail focus`,await js("document.getElementById('modulepanel').inert&&document.activeElement.id==='douyinmodule'"));
   }
   await js("document.getElementById('douyinmodule').click()");await navigationSettled();
   await js("document.querySelector('.workspace').click()");await navigationSettled();
   check('outside click closes attached panel',await js("document.getElementById('modulepanel').inert"));
-  await js("document.getElementById('navtoggle').click();document.getElementById('closenav').click()");await navigationSettled();
+  await js("document.getElementById('douyinmodule').click();document.getElementById('closenav').click()");await navigationSettled();
   check('close button closes attached panel',await js("document.getElementById('modulepanel').inert"));
-  await js("document.getElementById('navtoggle').click();document.querySelector('[data-source=local]').click()");await navigationSettled();
+  await js("document.getElementById('douyinmodule').click();document.querySelector('[data-source=local]').click()");await navigationSettled();
   check('source selection closes panel',await js("document.getElementById('modulepanel').inert"));
-  check('module and fold control share expanded state',await js("document.getElementById('douyinmodule').getAttribute('aria-expanded')===document.getElementById('navtoggle').getAttribute('aria-expanded')"));
+  check('primary icon owns panel expanded state',await js("document.getElementById('douyinmodule').getAttribute('aria-expanded')===String(!document.getElementById('modulepanel').inert)&&!document.getElementById('navtoggle')"));
   await js("document.getElementById('douyinmodule').click()");await sleep(50);
   check('panel visibly moves during expansion',await js("(()=>{const p=document.getElementById('modulepanel').getBoundingClientRect(),rail=document.querySelector('.module-rail').getBoundingClientRect();return p.left<rail.right&&p.right>rail.right})()"));
-  check('official arrow changes independently of the icon frame',await js("getComputedStyle(document.querySelector('#navtoggle svg')).transform==='none'&&document.querySelector('#navtoggle svg path:last-child').getAnimations().some(a=>a.playState==='running')"));
+  check('official arrow changes independently of the icon frame',await js("getComputedStyle(document.querySelector('#douyinmodule .rail-symbol')).transform==='none'&&document.querySelector('#douyinmodule .rail-panel-glyph path:last-child').getAnimations().some(a=>a.playState==='running')"));
   await sleep(400);await js("document.getElementById('douyinmodule').click()");await sleep(320);
   check('module button toggles its attached panel closed',await js("document.getElementById('modulepanel').inert"));
   await js("api('navigation_motion',{mode:'off'}).then(()=>refresh())");await sleep(100);
-  check('off setting removes panel and icon transitions',await js("getComputedStyle(document.getElementById('modulepanel')).transitionDuration==='0s'&&getComputedStyle(document.querySelector('#navtoggle svg path:last-child')).transitionDuration==='0s'"));
+  check('off setting removes panel and icon transitions',await js("getComputedStyle(document.getElementById('modulepanel')).transitionDuration==='0s'&&getComputedStyle(document.querySelector('#douyinmodule .rail-panel-glyph path:last-child')).transitionDuration==='0s'"));
   await js("api('navigation_motion',{mode:'on'}).then(()=>refresh())");await sleep(100);
-  await js("document.getElementById('navtoggle').click();document.querySelector('[data-source=favorites]').click()");
+  await js("document.getElementById('douyinmodule').click();document.querySelector('[data-source=favorites]').click()");
   w.setContentSize(1440,920);
-  for(let n=0;n<30;n++){await sleep(100);if(await js("!document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-312)<1"))break}
-  check('wide resize restores joined panel',await js("!document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-312)<1"));
-  await js("document.getElementById('navtoggle').click()");await navigationSettled();
-  check('wide collapse frees content space',await js("document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace').getBoundingClientRect().left-72)<1"));
-  await js("document.getElementById('navtoggle').click()");await navigationSettled();
+  for(let n=0;n<30;n++){await sleep(100);if(await js("!document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace-content').getBoundingClientRect().left-312)<1"))break}
+  check('wide resize restores joined panel',await js("!document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace-content').getBoundingClientRect().left-312)<1"));
+  await js("document.getElementById('douyinmodule').click()");await navigationSettled();
+  check('wide collapse frees content space',await js("document.getElementById('modulepanel').inert&&Math.abs(document.querySelector('.workspace-content').getBoundingClientRect().left-72)<1"));
+  await js("document.getElementById('douyinmodule').click()");await navigationSettled();
   await js("toggleNavigation();navigationAnimations[0]?.cancel()");await sleep(800);
   check('native external effect interruption restores usable flow',await js("!navigationReflow&&!document.body.classList.contains('nav-moving')&&navigationAnimations.length===0&&[...document.querySelectorAll('.card')].every(c=>getComputedStyle(c).position==='static')"));
   await js('toggleNavigation()');await navigationSettled();
   const reflow=await js(`(async()=>{
    const nodes=[...document.querySelectorAll('.card')],before=gridColumnCount(),frames=[],start=performance.now();
-   document.getElementById('navtoggle').click();while(performance.now()-start<750){await new Promise(requestAnimationFrame);
+   document.getElementById('douyinmodule').click();while(performance.now()-start<750){await new Promise(requestAnimationFrame);
     frames.push({moving:!!navigationReflow,rects:nodes.map(c=>{const r=c.getBoundingClientRect();return [r.left,r.top,r.width,r.height]}),opaque:nodes.every(c=>+getComputedStyle(c).opacity===1),glyph:[...document.querySelectorAll('.rail-symbol svg')].reduce((n,c)=>n+(+getComputedStyle(c).opacity),0),right:document.querySelector('.workspace').getBoundingClientRect().right});
    }
    const n=frames.findIndex((f,i)=>i>0&&!f.moving&&frames[i-1].moving);
@@ -643,10 +876,14 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('native cards remain fully opaque and mounted',reflow.opaque&&reflow.identity);
   check('native glyph never flashes between delayed phases',reflow.glyph>.98);
   check('native reflow has no final geometry jump or stuck layout',reflow.clean&&reflow.endJump<2&&reflow.edge<1);
-  await js("document.getElementById('navtoggle').click()");await navigationSettled();
+  await js("document.getElementById('douyinmodule').click()");await navigationSettled();
   check('first work is newest favorite',await js("document.querySelector('.card').dataset.id"),'1000000000000000001');
   check('existing note is recognized',await js("document.querySelector('.card').dataset.status"),'done');
-  check('saved work cannot re-enqueue',await js("document.querySelector('.card input').disabled"));
+  check('saved work can be selected for read-only action ideas',await js("!document.querySelector('.card input').disabled"));
+  await js("document.querySelector('.card input').click()");
+  check('selected saved work still cannot re-enqueue',await js("selection.size===1&&document.getElementById('enqueue').disabled"));
+  check('selected saved note enables only action-idea analysis',await js("!document.getElementById('ideas-from-selection').disabled"));
+  await js("document.querySelector('.card input').click()");
   await js("document.getElementById('nextpage').click()");
   check('second page starts at thirty-one',await js("document.querySelector('.card').dataset.id"),'1000000000000000031');
   await js("document.getElementById('nextpage').click()");

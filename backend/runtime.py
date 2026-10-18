@@ -1,15 +1,13 @@
 """Platform-neutral paths. User configuration never belongs in the source tree."""
-import json, os, shutil, sys
+import os, shutil, subprocess, sys
 from pathlib import Path
+from storage import read_json
 
 BUNDLE = Path(__file__).resolve().parent
 default_home = Path(os.environ.get('APPDATA', Path.home()/'.local/share'))/'Workdesk'
 ROOT = Path(os.environ.get('WORKDESK_HOME', default_home)).resolve()
 CONFIG_PATH = Path(os.environ.get('WORKDESK_CONFIG', ROOT/'config.json'))
-try:
-    CONFIG = json.loads(CONFIG_PATH.read_text(encoding='utf-8-sig'))
-except (OSError, ValueError):
-    CONFIG = {}
+CONFIG = read_json(CONFIG_PATH,{})
 VAULT = Path(CONFIG.get('vault_path') or ROOT/'unconfigured-vault').resolve()
 MEDIA = Path(CONFIG.get('media_path') or ROOT/'media').resolve()
 PRIVATE = ROOT/'private'
@@ -27,3 +25,5 @@ os.environ['PYTHONPATH'] = str(ROOT/'components')
 os.environ['HF_HOME'] = str(ROOT/'cache/huggingface')
 if CONFIG.get('hf_endpoint'):
     os.environ['HF_ENDPOINT'] = CONFIG['hf_endpoint']
+
+def creation_flags():return subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
