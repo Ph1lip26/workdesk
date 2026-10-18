@@ -4,21 +4,21 @@ Windows 桌面应用：个人首页、抖音收藏入库、购买决策夹、个
 
 ## 下载 Windows 安装包
 
-### [下载最新版：Workdesk 0.2.2 · Windows x64](https://github.com/Ph1lip26/workdesk/releases/download/v0.2.2/Workdesk-Setup-0.2.2-x64.exe)
+### [下载最新版：Workdesk 0.2.3 · Windows x64](https://github.com/Ph1lip26/workdesk/releases/download/v0.2.3/Workdesk-Setup-0.2.3-x64.exe)
 
 | 你要找的内容 | 入口 |
 |---|---|
 | 最新已发布版本与更新说明 | [Releases 下载页](https://github.com/Ph1lip26/workdesk/releases/latest) |
-| 安装包校验值 | [SHA256SUMS.txt](https://github.com/Ph1lip26/workdesk/releases/download/v0.2.2/SHA256SUMS.txt) |
+| 安装包校验值 | [SHA256SUMS.txt](https://github.com/Ph1lip26/workdesk/releases/download/v0.2.3/SHA256SUMS.txt) |
 | 安装与使用方法 | [使用指南](docs/usage-guide.md) |
 | 功能与修改记录 | [CHANGELOG](CHANGELOG.md) |
 | 开发、测试与打包 | [开发文档](docs/development.md) |
 
 **安装包在 Releases 的 Assets 中，不在源码文件夹。** 不要下载页面自动生成的 `Source code (zip)` 来安装。
 
-**版本边界：0.2.2 已于 2026-10-12 发布。** 包含个人健康、购买决策、一级导航长按换位与首页换位修复。本机后续修订是否已进入安装包，以对应 Release 说明为准；macOS 尚未构建和验证。
+**版本边界：0.2.3 于 2026-10-19 发布。** 包含体重知识库同步、健康主图尺寸与悬停、队列样式、导航与运行减负、解码修复及收藏转行动；macOS 尚未构建和验证。
 
-**当前 `main` 包含后续源码修订，安装包仍为0.2.2。** 体重知识库同步、健康主图尺寸与悬停、队列样式、导航减负、解码修复及可选GPU转写等更新，以源码和CHANGELOG为准；本次源码同步不代表已发布包含它们的新安装包。
+**可选 GPU 转写代码已包含，NVIDIA 运行库和模型不随安装包分发。** 目标电脑需要另行配置；未配置时仍可使用 CPU 转写。更详细的验证边界见 [Release](https://github.com/Ph1lip26/workdesk/releases/tag/v0.2.3) 与 CHANGELOG。升级前先备份本机数据并彻底退出工作台；换电脑安装不会自动迁移个人记录和登录态。
 
 下载后运行 `.exe`，按提示安装。程序未签名，请核对来源与 SHA256。AI 入库需要你自己的 Codex 登录；使用知识库功能需要 Obsidian。软件不附带会员、API Key 或他人的数据。
 
