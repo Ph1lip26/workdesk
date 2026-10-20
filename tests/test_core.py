@@ -187,6 +187,29 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'decoder unavailable'):s.process_job(j)
             command.assert_not_called();model.assert_not_called()
         self.assertEqual(s.store.rows('SELECT stage FROM jobs')[0]['stage'],'components')
+    def test_video_cache_skips_only_completed_preprocessing(self):
+        s,d,j=self.video_job();r=self.result();r.update(topic='',needs_placement=True)
+        for asr,frames in ((True,True),(True,False),(False,True)):
+            with self.subTest(asr=asr,frames=frames):
+                for name in ('transcript_raw.txt','visual_frames.json','visual_contact_sheet.jpg'):
+                    p=d/name
+                    if p.exists():p.unlink()
+                if asr:(d/'transcript_raw.txt').write_text('',encoding='utf-8')
+                if frames:
+                    (d/'visual_frames.json').write_text('{}',encoding='utf-8');(d/'visual_contact_sheet.jpg').write_bytes(b'cached')
+                run=self.root/'workbench/data/jobs'/j['id'];run.mkdir(parents=True,exist_ok=True)
+                (run/'transcribe.log').write_text('original ASR timing',encoding='utf-8')
+                with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_media',return_value=d),patch('components.ensure_decoder') as decoder,patch.object(s,'run_command') as command,patch.object(s,'analyze',return_value=r):
+                    s.process_job(j)
+                self.assertEqual(decoder.call_count,0 if asr and frames else 1)
+                self.assertEqual([Path(c.args[1]).stem for c in command.call_args_list],([] if asr else ['transcribe'])+([] if frames else ['frames']))
+                self.assertEqual((run/'transcribe.log').read_text(encoding='utf-8'),'original ASR timing')
+    def test_cancel_after_asr_does_not_start_frames_or_model(self):
+        s,d,j=self.video_job()
+        def cancel(*_args,**_kw):s.store.execute('UPDATE jobs SET cancel=1 WHERE id=?',(j['id'],))
+        with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_media',return_value=d),patch('components.ensure_decoder'),patch.object(s,'run_command',side_effect=cancel) as command,patch.object(s,'analyze') as model:
+            s.process_job(j);self.assertEqual(command.call_count,1);model.assert_not_called()
+        self.assertEqual(s.store.rows('SELECT status FROM jobs')[0]['status'],'cancelled')
     def test_cancel_during_decoder_setup_does_not_start_asr(self):
         s,d,j=self.video_job()
         def cancel(*_):s.store.execute('UPDATE jobs SET cancel=1 WHERE id=?',(j['id'],))
@@ -202,6 +225,12 @@ class Tests(unittest.TestCase):
             r=s.analyze(ID,d,run);atomic_json(run/'verified-analysis.json',r)
             self.assertEqual(s.analyze(ID,d,run),r);self.assertEqual(len(calls),1)
         self.assertIn(d/'image_001.png',calls[0]);self.assertIn(d/'image_002.png',calls[0])
+        for config in ('project_doc_max_bytes=0','skills.max_context_tokens=1','web_search="disabled"'):
+            self.assertIn(config,calls[0])
+        self.assertTrue(any(isinstance(arg,str) and arg.startswith('model_instructions_file=') and 'analysis-instructions.md' in arg for arg in calls[0]))
+        disabled=[calls[0][n+1] for n,value in enumerate(calls[0][:-1]) if value=='--disable']
+        self.assertTrue({'apps','plugins','shell_tool','multi_agent','sleep_tool'}<=set(disabled))
+        self.assertEqual(calls[0][calls[0].index('--sandbox')+1],'read-only')
         self.assertNotIn(d/'visual_contact_sheet.jpg',calls[0]);self.assertNotIn('raw_transcript',read_json(run/'input.json'))
         # Source change must invalidate the previous verified draft even if the new manifest is intact.
         from PIL import Image
