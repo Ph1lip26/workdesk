@@ -50,7 +50,9 @@ async function create(){
   tray.setContextMenu(Menu.buildFromTemplate([{label:'打开工作台',click:show},{label:'重新加载界面',click:()=>{show();window.webContents.reload()}},
     {label:'设置',click:async()=>{show();if(await idle())await window.loadURL(setupURL);else dialog.showMessageBox(window,{message:'有任务或后台操作，完成后再修改设置。'})}},
     {type:'separator'},{label:'彻底退出（不打断任务）',click:quit}]));
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(process.platform==='darwin'?Menu.buildFromTemplate([
+    {label:'Workdesk',submenu:[{label:'打开工作台',click:show},{type:'separator'},{label:'退出 Workdesk',accelerator:'Command+Q',click:quit}]},
+    {role:'editMenu'},{role:'windowMenu'}]):null);
   const authorizeAppearance=e=>{if(e.sender!==window.webContents||(e.senderFrame?.url!==setupURL&&!(origin&&trusted(e.senderFrame?.url,origin))))throw Error('只允许本机工作台修改外观')};
   ipcMain.handle('appearance:get',e=>{authorizeAppearance(e);return appearance.read(home)});
   ipcMain.handle('appearance:apply',(e,mode)=>{
@@ -91,6 +93,7 @@ async function startBackend(){
   const instance=crypto.randomUUID();origin=`http://127.0.0.1:${port}`;
   const env={...process.env,WORKDESK_HOME:home,WORKDESK_CONFIG:path.join(home,'config.json'),WORKDESK_INSTANCE:instance,
     PLAYWRIGHT_BROWSERS_PATH:path.join(runtime(),'browsers'),PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8',PYTHONDONTWRITEBYTECODE:'1'};
+  if(process.platform==='darwin')env.PATH=['/opt/homebrew/bin','/usr/local/bin',env.PATH||''].join(path.delimiter);
   for(const k of Object.keys(env))if(/^(OPENAI_|DEEPSEEK_|GH_TOKEN$|GITHUB_TOKEN$)/.test(k))delete env[k];
   const log=fs.openSync(path.join(home,'backend.log'),'a');
   backend=spawn(python(),[path.join(bundle(),'server.py'),'--port',String(port)],{cwd:bundle(),env,windowsHide:true,detached:true,stdio:['ignore',log,log]});

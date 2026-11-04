@@ -9,6 +9,8 @@ def main():
     p.add_argument('--device',choices=['auto','cuda','cpu'],default='auto')
     a=p.parse_args();work=Path(a.outdir);target=work/'transcript_raw.txt'
     if target.exists():return
+    # CTranslate2 CUDA is not a macOS backend; keep small/int8 without a failed GPU subprocess.
+    if sys.platform=='darwin' and a.device=='auto':a.device='cpu'
     if a.device=='auto':
         # A CUDA DLL failure can terminate Python; isolate GPU work before CPU fallback.
         print('ASR: trying CUDA / float16',flush=True)

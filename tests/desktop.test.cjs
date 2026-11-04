@@ -1,6 +1,13 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {trusted,safeExternal}=require('../desktop/platform.cjs');
 const fs=require('node:fs'),path=require('node:path');
+test('Mac test target is separate and refuses wrong-host runtime packaging',()=>{
+ const base=require('../package.json').build,mac=require('../electron-builder.mac.cjs');
+ assert.equal(base.directories.output,'build/dist');assert.equal(mac.directories.output,'build/dist-mac');
+ assert.equal(mac.mac.identity,'-');assert.equal(mac.mac.hardenedRuntime,false);
+ assert.ok(mac.mac.artifactName.includes('TEST'));assert.ok(mac.extraResources.find(r=>r.to==='runtime').filter.includes('!**/site-packages/av/**'));
+ if(process.platform!=='darwin'||process.arch!=='arm64')assert.throws(()=>mac.beforeBuild(),/macOS arm64/);
+});
 test('appearance is local, validated and has matching native palettes',()=>{
  const appearance=require('../desktop/appearance.cjs'),os=require('node:os');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'workdesk-appearance-'));

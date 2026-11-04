@@ -1,5 +1,7 @@
 ## 开发与更新
 
+Mac适配和独立测试构建见[Mac测试版说明](mac-preview.md)。目前仍缺远程workflow权限和macOS运行／真机验收；不要用Windows运行时生成假Mac包。
+
 ```powershell
 npm ci
 python scripts/prepare_runtime.py

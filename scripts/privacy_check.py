@@ -58,9 +58,11 @@ def main():
         for f in a.payload.rglob('*'):
             if f.is_file() and f.name.lower() in forbidden:problems.append((f.name,'private_payload_file'))
             if f.is_file() and (f.suffix=='.pyc' or '.links' in f.parts):problems.append((f.name,'local_path_payload'))
-        packages=a.payload/'resources/runtime/Lib/site-packages'
-        if any(packages.glob('av*')):problems.append(('runtime/av','decoder_must_be_obtained_locally'))
-        backend=a.payload/'resources/backend'
+        resources=a.payload/('Resources' if (a.payload/'Resources').is_dir() else 'resources')
+        runtime=resources/'runtime'
+        packages=[runtime/'Lib/site-packages',*runtime.glob('lib/python*/site-packages')]
+        if any(any(p.glob('av*')) for p in packages):problems.append(('runtime/av','decoder_must_be_obtained_locally'))
+        backend=resources/'backend'
         if not backend.is_dir():problems.append(('resources/backend','missing_backend_payload'))
         else:
             own=list(f for f in backend.rglob('*') if f.is_file())

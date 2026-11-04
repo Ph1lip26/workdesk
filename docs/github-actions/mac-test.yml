@@ -1,0 +1,50 @@
+name: macOS arm64 test package
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mac-test:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: python3 scripts/prepare_macos_runtime.py
+      - run: npm test
+        env:
+          WORKDESK_PYTHON: ${{ github.workspace }}/build/runtime/bin/python3
+      - run: npm run package:mac
+      - name: Payload privacy gate
+        run: |
+          export WORKDESK_PYTHON="$PWD/build/runtime/bin/python3"
+          node scripts/audit_payload.cjs build/dist-mac/mac-arm64/Workdesk.app/Contents
+      - name: Native macOS smoke
+        run: |
+          export WORKDESK_HOME="$PWD/build/mac-smoke"
+          export WORKDESK_TEST_PAYLOAD="$PWD/build/dist-mac/mac-arm64/Workdesk.app"
+          export WORKDESK_PYTHON="$WORKDESK_TEST_PAYLOAD/Contents/Resources/runtime/bin/python3"
+          mkdir -p "$WORKDESK_HOME"
+          node_modules/.bin/electron scripts/mac_smoke.cjs
+      - name: Actual packaged executable boot
+        # The real executable must boot too, not just the development Electron harness.
+        run: python3 scripts/mac_packaged_boot.py
+      - name: Checksums
+        run: cd build/dist-mac && shasum -a 256 *-TEST.dmg *-TEST.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Workdesk-macOS-arm64-TEST
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            build/dist-mac/*-TEST.dmg
+            build/dist-mac/*-TEST.zip
+            build/dist-mac/SHA256SUMS.txt

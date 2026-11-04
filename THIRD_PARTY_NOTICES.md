@@ -1,6 +1,9 @@
 # Third-party notices
 
 Workdesk redistributes Electron/Chromium and an official CPython Windows runtime.
+The experimental macOS recipe uses Astral's python-build-standalone distribution
+of CPython; its bundled license files must be retained. Source and build information:
+https://github.com/astral-sh/python-build-standalone .
 Their licenses and notices are retained in the packaged distribution. The
 Python runtime contains public wheel distributions listed in DEPENDENCIES.txt;
 their installed *.dist-info license directories remain intact.

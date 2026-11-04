@@ -1,4 +1,4 @@
-import contextlib, datetime, hashlib, json, os, re, sqlite3, subprocess, threading, time, uuid
+import contextlib, datetime, hashlib, json, os, re, sqlite3, subprocess, sys, threading, time, uuid
 from pathlib import Path
 
 from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDIAN,creation_flags
@@ -45,6 +45,10 @@ def discover_codex():
     if CONFIG.get('codex_path') and Path(CONFIG['codex_path']).is_file():return Path(CONFIG['codex_path'])
     found=shutil.which('codex')
     if found:return Path(found)
+    if sys.platform=='darwin':
+        for folder in ('/opt/homebrew/bin','/usr/local/bin'):
+            candidate=Path(folder)/'codex'
+            if candidate.is_file() and os.access(candidate,os.X_OK):return candidate
     base=Path(os.environ.get('LOCALAPPDATA',''))/'OpenAI/Codex/bin'
     found=sorted(base.glob('*/codex.exe'),key=lambda p:p.stat().st_mtime,reverse=True)
     if found:return found[0]

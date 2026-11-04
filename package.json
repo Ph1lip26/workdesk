@@ -1,6 +1,6 @@
 {
   "name": "workdesk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Private-first personal workbench with a Douyin knowledge intake module",
   "main": "desktop/main.cjs",
   "private": true,
@@ -8,7 +8,8 @@
   "scripts": {
     "start": "electron .",
     "test": "node scripts/test.cjs",
-    "package:win": "electron-builder --win nsis --x64 --publish never"
+    "package:win": "electron-builder --win nsis --x64 --publish never",
+    "package:mac": "electron-builder --config electron-builder.mac.cjs --mac --arm64 --publish never"
   },
   "devDependencies": {
     "electron": "44.5.1",

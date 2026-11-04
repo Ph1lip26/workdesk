@@ -4,7 +4,11 @@ from pathlib import Path
 from storage import read_json
 
 BUNDLE = Path(__file__).resolve().parent
-default_home = Path(os.environ.get('APPDATA', Path.home()/'.local/share'))/'Workdesk'
+def default_runtime_home(platform,home,appdata=None):
+    if platform=='darwin':return home/'Library/Application Support/workdesk'
+    return Path(appdata or home/'.local/share')/'Workdesk'
+
+default_home = default_runtime_home(sys.platform,Path.home(),os.environ.get('APPDATA'))
 ROOT = Path(os.environ.get('WORKDESK_HOME', default_home)).resolve()
 CONFIG_PATH = Path(os.environ.get('WORKDESK_CONFIG', ROOT/'config.json'))
 CONFIG = read_json(CONFIG_PATH,{})
@@ -13,7 +17,9 @@ MEDIA = Path(CONFIG.get('media_path') or ROOT/'media').resolve()
 PRIVATE = ROOT/'private'
 PYTHON = Path(sys.executable)
 SCRIPTS = BUNDLE/'pipeline'
-OBSIDIAN = Path(CONFIG.get('obsidian_path') or shutil.which('obsidian') or 'obsidian')
+mac_obsidian=Path('/Applications')/'Obsidian.app/Contents/MacOS/Obsidian'
+OBSIDIAN = Path(CONFIG.get('obsidian_path') or shutil.which('obsidian') or
+                (str(mac_obsidian) if sys.platform=='darwin' and mac_obsidian.is_file() else 'obsidian'))
 for folder in (ROOT/'data', MEDIA, PRIVATE):
     folder.mkdir(parents=True, exist_ok=True)
 os.environ['WORKDESK_HOME'] = str(ROOT)
