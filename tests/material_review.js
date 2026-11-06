@@ -14,9 +14,9 @@ async (page,output='build')=>{
   const family=getComputedStyle(document.body).fontFamily;
   return [...document.querySelectorAll('.home-top h1,.home-tile h2,.home-tile h3,.home-tile button,.home-tile p')].every(e=>getComputedStyle(e).fontFamily===family);
  }));
- check('metal cards use non-periodic fine brushing, neutral reflection, and a stronger machined edge',await page.evaluate(()=>{
+ check('metal cards use clean satin, restrained highlights, and a smooth edge',await page.evaluate(()=>{
   const c=getComputedStyle(document.querySelector('[data-home-card=status]'));
-  return c.backgroundImage.includes('data:image/svg+xml')&&c.backgroundColor==='rgb(46, 48, 52)'&&c.boxShadow!=='none'&&c.backdropFilter==='none';
+  return !c.backgroundImage.includes('data:image')&&c.backgroundColor==='rgb(48, 48, 48)'&&c.boxShadow!=='none'&&c.backdropFilter==='none';
  }));
  check('all six home cards share exactly one fill and finish',await page.evaluate(()=>{
   const cards=[...document.querySelectorAll('.home-tile')],styles=cards.map(e=>getComputedStyle(e));
@@ -35,7 +35,7 @@ async (page,output='build')=>{
  });check('selected home text and actions pass AA against surface highlight',ratios.every(r=>r>=4.5));
  check('home corners are larger with continuous-corner enhancement',await page.evaluate(()=>{const c=getComputedStyle(document.querySelector('.home-tile'));return parseFloat(c.borderRadius)>=28&&(!CSS.supports('corner-shape','squircle')||c.cornerShape==='superellipse(2)') }));
  check('normal home body text is fuller, not thin',await page.evaluate(()=>['.tile-record-summary','.tile-record-top','.home-source'].every(sel=>parseFloat(getComputedStyle(document.querySelector(sel)).fontWeight)>=550)));
- check('all six cards retain a static brushed finish rather than flat fill',await page.evaluate(()=>[...document.querySelectorAll('.home-tile')].every(c=>getComputedStyle(c).backgroundImage.includes('data:image/svg+xml'))));
+ check('all six cards retain a clean satin finish without image grain',await page.evaluate(()=>[...document.querySelectorAll('.home-tile')].every(c=>!getComputedStyle(c).backgroundImage.includes('data:image'))));
  await page.screenshot({path:output+'/material-home.png'});
  await page.locator('[data-go-module=douyin]').click();await page.waitForTimeout(900);
  await page.evaluate(async()=>{await api('navigation_motion',{mode:'on'});await refresh()});

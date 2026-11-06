@@ -14,6 +14,39 @@ function scheduleStatePoll(){
  if(delay)statePollTimer=setTimeout(refresh,delay);
 }
 let pageNumber=1;
+let workDetailID='',workDetailKey='',workDetailScroll=0,workDetailFocus=null;
+function renderWorkDetail(){
+ const host=$('work-detail');if(!host||!workDetailID||!state)return;
+ const v=state.videos.find(v=>v.id===workDetailID);
+ if(!v){closeWorkDetail();return}
+ const status=videoState(v),job=currentJob(v.id),key=JSON.stringify([v,status,job?.message,eligible(v),selection.has(v.id)]);
+ if(key===workDetailKey)return;workDetailKey=key;
+ const active=host.contains(document.activeElement)?document.activeElement.id:null;
+ host.innerHTML='<header class="work-detail-head"><span class="view-context">作品详情</span><button id="work-detail-close" class="quiet">返回列表</button></header><h2 id="work-detail-title">'+esc(v.title||'未命名作品')+'</h2><p class="tile-evidence">'+esc(v.author||'作者待确认')+' · '+(v.kind==='images'?'图文作品':'视频作品')+'</p><div class="work-detail-state"><strong>'+esc(status.label)+'</strong><p>'+esc(v.note?'知识笔记已保存，可直接打开。':v.raw?'原始资料已保存，可继续生成知识笔记。':job?.message||'尚未生成知识笔记。')+'</p></div><div class="work-detail-actions">'+(saved(v)?'<button id="work-detail-note" data-open-video="'+esc(v.id)+'">'+(v.note?'打开知识笔记':'打开原始资料')+'</button>':'')+(eligible(v)?'<button id="work-detail-select" data-detail-select="'+esc(v.id)+'">'+(selection.has(v.id)?'取消选择':'选择此作品')+'</button>':'')+(job?'<button id="work-detail-queue" data-detail-queue>查看处理队列</button>':'')+'<a href="'+workURL(v)+'" target="_blank" rel="noopener noreferrer">在抖音查看原作品</a></div><p class="tile-evidence">这里展示已有记录，不重新下载视频，也不会自动开始处理。</p>';
+ if(active)$(active)?.focus({preventScroll:true});
+}
+function openWorkDetail(id,trigger){
+ if(!state?.videos.some(v=>v.id===id))return;
+ stopNavigationAnimation();
+ const ws=document.querySelector('.workspace');
+ if(!workDetailID){workDetailScroll=ws.scrollTop;workDetailFocus=trigger||document.activeElement}
+ workDetailID=id;workDetailKey='';renderWorkDetail();$('work-detail').hidden=false;$('librarypage').classList.add('has-work-detail');
+ syncWorkDetailLayout();$('work-detail-close').focus({preventScroll:true});
+}
+function syncWorkDetailLayout(){
+ const page=$('librarypage');if(!page||!workDetailID)return;
+ const narrow=page.getBoundingClientRect().width<1000;
+ page.classList.toggle('work-detail-full',narrow);
+ $('library').inert=narrow;page.querySelector('.topbar').inert=narrow;
+ document.querySelector('.workspace').scrollTop=narrow?0:workDetailScroll;
+}
+function closeWorkDetail({focus=true}={}){
+ if(!workDetailID)return;
+ workDetailID='';workDetailKey='';$('work-detail').hidden=true;
+ $('librarypage').classList.remove('has-work-detail','work-detail-full');$('library').inert=false;$('librarypage').querySelector('.topbar').inert=false;
+ document.querySelector('.workspace').scrollTop=workDetailScroll;
+ if(focus&&workDetailFocus?.isConnected)workDetailFocus.focus({preventScroll:true});
+}
 // Same-origin, bounded raster branding. Light-ink centroid provides optical
 // alignment without changing the official geometry or storing brand metadata.
 function brandInkShift(pixels,width,height){
@@ -42,6 +75,7 @@ const check="<svg data-lucide=\"check\" aria-hidden=\"true\" xmlns=\"http://www.
 const moreIcon="<svg data-lucide=\"ellipsis\" aria-hidden=\"true\" xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" ><circle cx=\"12\" cy=\"12\" r=\"1\" /><circle cx=\"19\" cy=\"12\" r=\"1\" /><circle cx=\"5\" cy=\"12\" r=\"1\" /></svg>";
 const noteLink=p=>'obsidian://open?vault='+encodeURIComponent(state.vault)+'&file='+encodeURIComponent(p);
 const labels={queued:'待处理',running:'处理中',needs_review:'等待归类',failed:'处理失败',completed:'已完成',skipped:'已存在',cancelled:'已取消'};
+const queueItems=jobs=>jobs.filter(j=>!['completed','skipped'].includes(j.status));
 const saved=v=>Boolean(v.note||v.raw);
 const cleanTitle=s=>String(s||'未命名视频').replace(/\s*#[^\s#]*/g,'').trim()||s;
 function currentJob(id){return state.jobs.find(j=>j.video===id)}
@@ -112,6 +146,7 @@ function renderNavigation(){
  $('viewcontext').textContent=folder?'抖音收藏 / 收藏夹':'抖音收藏';
 }
 function selectDouyinPage(page,{focus=true}={}){
+ closeWorkDetail({focus:false});
  const ws=document.querySelector('.workspace'),changed=douyinPage!==page;
  if(changed){if(douyinPage==='queue')queueScroll=ws.scrollTop;else libraryScroll=ws.scrollTop}
  douyinPage=page==='queue'?'queue':'library';
@@ -137,6 +172,7 @@ function selectSource(value){
  if(!keepPage)$('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
 }
 function render(){
+ if(workDetailID)renderWorkDetail();
  if(typeof syncRailOrder==='function')syncRailOrder();
  updateNavigationMotion(state.navigation_motion);
  renderNavigation();
@@ -161,7 +197,9 @@ function render(){
  $('login').classList.toggle('is-loading',Boolean(state.authchecking));$('login').setAttribute('aria-busy',String(Boolean(state.authchecking)));
  $('openlogin').hidden=!account.needs_login;
  $('diagnostictext').textContent=(sync.detail||sync.message||'尚无同步记录')+'\n'+(state.browser?.message||'');
- $('queuecount').textContent=state.jobs.filter(j=>['queued','running','needs_review'].includes(j.status)).length;$('queuecount').hidden=$('queuecount').textContent==='0';
+ const currentQueue=queueItems(state.jobs);
+ $('queuecount').textContent=currentQueue.length;$('queuecount').hidden=!currentQueue.length;
+ $('queue-summary').textContent=currentQueue.length+' 项待处理或尚未成功 · 已完成记录已隐藏';
  $('pause').textContent=state.paused?'继续队列':'暂停后续';
  const openMenus=new Set([...document.querySelectorAll('.card-menu[open]')].map(e=>e.closest('.card').dataset.id));
  const cardsKey=JSON.stringify([pageNumber,$('sort').value,items,items.map(v=>[videoState(v),eligible(v)]),items.length?null:[view,folder,$('search').value,$('status').value]]);
@@ -171,7 +209,7 @@ function render(){
    const status=videoState(v),title=cleanTitle(v.title),cover=/^https:\/\//.test(v.cover||'')?'<img src="'+esc(v.cover)+'" loading="lazy" referrerpolicy="no-referrer" alt="'+esc(title)+'的封面">':'<span class="placeholder">暂无封面</span>';
    const tip=v.note?'已有知识笔记':v.raw?'已有原始资料，可继续生成知识笔记':v.kind==='images'?'选择图文：逐张识别原图并生成笔记':status.label;
    const duration=v.duration?Math.floor(v.duration/60)+':'+String(Math.round(v.duration)%60).padStart(2,'0'):v.kind==='images'?'图文':'';
-   return '<article class="card '+(selection.has(v.id)?'selected':'')+'" data-id="'+v.id+'" data-status="'+status.key+'"><div class="cover">'+cover+'<label title="'+esc(tip)+'"><input type="checkbox" aria-label="选择作品：'+esc(title)+'" data-video="'+v.id+'" '+(selection.has(v.id)?'checked':'')+' '+(selectable(v)?'':'disabled')+'></label><span class="cover-status '+status.key+'" title="'+esc(tip)+'">'+(status.key==='done'?check:'')+status.label+'</span>'+(duration?'<span class="duration">'+duration+'</span>':'')+'</div><div class="card-content"><a class="card-title" href="'+workURL(v)+'" target="_blank" rel="noopener" title="'+esc(v.title)+'">'+esc(title)+'</a><div class="card-bottom"><span class="author">'+esc(v.author||'作者待确认')+'</span><details class="card-menu" '+(openMenus.has(v.id)?'open':'')+'><summary aria-label="作品选项：'+esc(title)+'">'+moreIcon+'</summary><div><a href="'+workURL(v)+'" target="_blank" rel="noopener">查看原作品</a>'+(saved(v)?'<a class="note-action" data-open-video="'+v.id+'" href="'+noteLink(v.note||v.raw)+'">'+(v.note?'打开知识笔记':'打开原始资料')+'</a>':'')+(v.raw&&!v.note?'<span class="muted">已入库的是原始资料；勾选可继续生成知识笔记。</span>':'')+(v.kind==='images'?'<span class="muted">按原图顺序逐张识别；动态片段不分析。</span>':'')+'</div></details></div>'+($('sort').value==='published'?'<div class="published-date">'+(v.published_at?new Date(v.published_at*1000).toLocaleDateString('zh-CN'):'发布时间未知')+'</div>':'')+'</div></article>';
+   return '<article class="card '+(selection.has(v.id)?'selected':'')+'" data-id="'+v.id+'" data-status="'+status.key+'"><div class="cover">'+cover+'<label title="'+esc(tip)+'"><input type="checkbox" aria-label="选择作品：'+esc(title)+'" data-video="'+v.id+'" '+(selection.has(v.id)?'checked':'')+' '+(selectable(v)?'':'disabled')+'></label><span class="cover-status '+status.key+'" title="'+esc(tip)+'">'+(status.key==='done'?check:'')+status.label+'</span>'+(duration?'<span class="duration">'+duration+'</span>':'')+'</div><div class="card-content"><a class="card-title" data-work-detail="'+v.id+'" href="#work-'+v.id+'" title="'+esc(v.title)+'">'+esc(title)+'</a><div class="card-bottom"><span class="author">'+esc(v.author||'作者待确认')+'</span><details class="card-menu" '+(openMenus.has(v.id)?'open':'')+'><summary aria-label="作品选项：'+esc(title)+'">'+moreIcon+'</summary><div><a href="'+workURL(v)+'" target="_blank" rel="noopener">查看原作品</a>'+(saved(v)?'<a class="note-action" data-open-video="'+v.id+'" href="'+noteLink(v.note||v.raw)+'">'+(v.note?'打开知识笔记':'打开原始资料')+'</a>':'')+(v.raw&&!v.note?'<span class="muted">已入库的是原始资料；勾选可继续生成知识笔记。</span>':'')+(v.kind==='images'?'<span class="muted">按原图顺序逐张识别；动态片段不分析。</span>':'')+'</div></details></div>'+($('sort').value==='published'?'<div class="published-date">'+(v.published_at?new Date(v.published_at*1000).toLocaleDateString('zh-CN'):'发布时间未知')+'</div>':'')+'</div></article>';
  }).join(''):'<div class="empty">'+(folder?'这个收藏夹没有匹配的视频。':$('search').value||$('status').value!=='all'?'没有匹配的视频。':'尚未读取到收藏，点击刷新收藏。')+'</div>';
  cardFingerprint=cardsKey;
  }
@@ -186,9 +224,9 @@ function render(){
  const ideaCount=[...selection].filter(id=>state.videos.find(v=>v.id===id)?.note).length;
  $('ideas-from-selection').disabled=!ideaCount;$('ideas-from-selection').textContent='收藏转行动'+(ideaCount?'（'+ideaCount+'）':'');
  $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>state.videos.find(v=>v.id===id)?.raw)?'生成知识笔记':'加入知识库';
- const jobsKey=JSON.stringify([state.jobs,state.topics,state.jobs.map(j=>state.videos.find(v=>v.id===j.video)?.title)]);
+ const jobsKey=JSON.stringify([currentQueue,state.topics,currentQueue.map(j=>state.videos.find(v=>v.id===j.video)?.title)]);
  if(jobsKey!==jobsFingerprint){
- $('jobs').innerHTML=state.jobs.length?state.jobs.map(j=>{const v=state.videos.find(v=>v.id===j.video),badge=['completed','skipped'].includes(j.status)?'done':j.status==='failed'?'failed':'pending';return '<div class="job"><span class="badge '+badge+'">'+(badge==='done'?check:'')+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(cleanTitle(v?.title||j.video))+'</p><p class="job-message">'+esc(j.message)+'</p>'+(j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+(j.status==='needs_review'?'<select data-topic="'+j.id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+state.topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+'<div class="job-actions">'+(j.note?'<a data-open-job="'+j.id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+(['failed','cancelled'].includes(j.status)?'<button data-retry="'+j.id+'">重试</button>':'')+(j.status==='needs_review'?'<button data-place="'+j.id+'">确认归类</button>':'')+(!['completed','skipped','cancelled'].includes(j.status)?'<button data-cancel="'+j.id+'">取消</button>':'')+'<button data-preview="'+j.id+'">查看草稿</button></div></div>'}).join(''):'<p class="queue-empty">没有待处理的视频。</p>';
+ $('jobs').innerHTML=currentQueue.length?currentQueue.map(j=>{const v=state.videos.find(v=>v.id===j.video),badge=['completed','skipped'].includes(j.status)?'done':j.status==='failed'?'failed':'pending';return '<div class="job"><span class="badge '+badge+'">'+(badge==='done'?check:'')+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(cleanTitle(v?.title||j.video))+'</p><p class="job-message">'+esc(j.message)+'</p>'+(j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+(j.status==='needs_review'?'<select data-topic="'+j.id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+state.topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+'<div class="job-actions">'+(j.note?'<a data-open-job="'+j.id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+(['failed','cancelled'].includes(j.status)?'<button data-retry="'+j.id+'">重试</button>':'')+(j.status==='needs_review'?'<button data-place="'+j.id+'">确认归类</button>':'')+(!['completed','skipped','cancelled'].includes(j.status)?'<button data-cancel="'+j.id+'">取消</button>':'')+'<button data-preview="'+j.id+'">查看草稿</button></div></div>'}).join(''):'<p class="queue-empty">当前没有待处理或未成功的内容。</p>';
  jobsFingerprint=jobsKey;}
 }
 async function refresh(){if(busy)return false;busy=true;clearTimeout(statePollTimer);try{state=await api('state');updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!selectable(v))selection.delete(id)}const {browser,sync_progress,...stable}=state;const next=JSON.stringify(stable);if(next!==fingerprint&&!navigationReflow&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false;scheduleStatePoll()}}
@@ -281,7 +319,7 @@ function transitionNavigation(change){
  const after=content.getBoundingClientRect();
  if(Math.abs(before.left-after.left)<1)return;
  const gridAfter=grid.getBoundingClientRect(),ends=nodes.map(card=>card.getBoundingClientRect());
- const generation=navigationGeneration,duration=560,easing='cubic-bezier(.22,1,.36,1)';
+ const generation=navigationGeneration,duration=340,easing='cubic-bezier(.22,1,.36,1)';
  const options={duration,easing,fill:'both'};
  const originalGridStyle=grid.getAttribute('style'),styles=nodes.map(card=>card.getAttribute('style'));
  const scrollEnd=anchor&&scroll>0?Math.max(0,workspace.scrollTop+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
@@ -311,10 +349,10 @@ function transitionNavigation(change){
    if(!((rect.bottom>viewport.top&&rect.top<viewport.bottom)||(end.bottom>viewport.top&&end.top<viewport.bottom)))return;
    card.style.willChange='transform';
    const dx=(rect.left-gridBefore.left)-(end.left-gridAfter.left),dy=(rect.top-gridBefore.top)-(end.top-gridAfter.top);
-   // Fixed card layout; interpolate on the compositor, not thirty layouts per
-   // frame. Real old/end rectangles give monotonic size without a grid zoom.
-   const from=`translate(${dx}px,${dy}px) scale(${rect.width/end.width},${rect.height/end.height})`;
-   navigationAnimations.push(card.animate([{transform:from},{transform:'translate(0,0) scale(1,1)'}],options));
+   // Layout width once. Per-frame width interpolation regresses frame times on
+   // the native renderer; keep text unscaled and animate only cell positions.
+   const from=`translate(${dx}px,${dy}px)`;
+   navigationAnimations.push(card.animate([{transform:from},{transform:'translate(0,0)'}],options));
   });
  }
  // Preserve the first visible work when opening the panel far down the list.
@@ -373,6 +411,7 @@ function toggleNavigation(){
  if(compactNavigation.matches)compactPanelOpen=!compactPanelOpen;
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
  updateNavigationToggle();
+ if(workDetailID)syncWorkDetailLayout();
  if(document.body.dataset.module!=='douyin')animateModuleGlyph(document.body.dataset.module);
  });
 }
@@ -427,7 +466,7 @@ $('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toas
 // Only a complete pointer gesture on the actual outer backdrop dismisses a panel.
 // Preview closes independently; the underlying queue remains a normal page.
 for(const dialog of document.querySelectorAll('dialog')){
- if(dialog.id==='purchaseeditor')continue; // Its own closer protects unsaved edits.
+ if(['purchaseeditor','illnesseditor'].includes(dialog.id))continue; // Its own closer protects unsaved edits.
  const close=dialog.id==='enqueueconfirm'?closeEnqueueConfirm:()=>dialog.close();
  let down=null;
  const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};
@@ -436,7 +475,20 @@ for(const dialog of document.querySelectorAll('dialog')){
  dialog.addEventListener('pointercancel',()=>down=null);
 }
 document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(statePollTimer);else refresh()});
+$('status').value='new'; // Reset the default once per load, not on polling or module switches.
 alignWorkspaceBrand();refresh();
 
 setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing||state?.syncing||syncTransportError))pollSyncStatus()},900);
 setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing))paintSyncStatus()},1000);
+
+document.addEventListener('click',e=>{
+ const link=e.target.closest('[data-work-detail]');
+ if(link){e.preventDefault();openWorkDetail(link.dataset.workDetail,link);return}
+ if(e.target.closest('#work-detail-close'))closeWorkDetail();
+ const selected=e.target.closest('[data-detail-select]');
+ if(selected){const id=selected.dataset.detailSelect;if(selection.has(id))selection.delete(id);else if(selection.size<20)selection.add(id);else toast('每批最多 20 条');render()}
+ if(e.target.closest('[data-detail-queue]')){closeWorkDetail({focus:false});openQueuePage()}
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&workDetailID&&!document.querySelector('dialog:modal')){e.preventDefault();closeWorkDetail()}});
+let detailResizeFrame=0;
+window.addEventListener('resize',()=>{cancelAnimationFrame(detailResizeFrame);detailResizeFrame=requestAnimationFrame(syncWorkDetailLayout)});

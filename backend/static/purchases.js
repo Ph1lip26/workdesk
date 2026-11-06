@@ -17,6 +17,14 @@ function purchaseBrief(r){
  rows.push('', '## 待核实问题',r.questions||'请判断哪些已有信息需要重新核实。');
  if(r.source_note)rows.push('关联资料：[['+r.source_note+']]');if(r.source_url)rows.push('资料链接：'+r.source_url);
  rows.push('', '记录维护时间：'+r.updated,'以上为保存的记录，不是实时市场信息；回看日期不代表发布日期或购买承诺。');
+ if(typeof cachedSummary==='function'){
+  const summary=cachedSummary('purchase:'+r.id),items=summary?.result?.items||[];
+  if(items.length){
+   rows.push('','## 最新知识库摘要（AI提炼，未覆盖上述手动记录）','生成时间：'+new Date(summary.updated*1000).toLocaleString('zh-CN'));
+   for(const item of items){rows.push('- '+(item.key==='conflict'?'差异：':'')+item.text+(item.when?'；条件：'+item.when:''));for(const e of item.evidence){const source=summary.sources.find(s=>s.id===e.source_id);rows.push('  依据：'+(source?.path?'[['+source.path+']]':source?.title||'本机记录')+'；原文：'+e.quote)}}
+   for(const warning of summary.result.warnings||[])rows.push('待核实：'+warning);
+  }
+ }
  return rows.join('\n');
 }
 function selectedPurchase(records=purchaseVisible()){
@@ -33,7 +41,7 @@ function purchaseText(text,empty='尚未填写'){
 }
 function purchaseDetail(r){
  const candidateRows=r.candidates.map(c=>'<article class="purchase-candidate-record"><h3>'+esc(c.name)+'</h3><dl><div><dt>记录价格</dt><dd>'+esc(c.price||'未记录')+'</dd></div><div><dt>报价渠道</dt><dd>'+esc(c.channel||'未记录')+'</dd></div><div><dt>核价日期</dt><dd>'+esc(c.checked_at||'未记录')+'</dd></div></dl>'+(c.notes?purchaseText(c.notes):'')+purchaseLink(c.url,'查看候选资料')+'</article>').join('');
- return '<div class="purchase-detail-meta"><span class="purchase-status">'+esc(PURCHASE_STATUS[r.status])+'</span><span>预算：'+esc(r.budget||'尚未填写')+'</span><span>维护于 '+esc(r.updated.slice(0,10))+'</span></div><div class="purchase-detail-grid">'+
+ return '<section id="purchase-ai-summary" class="purchase-section"></section><h2 class="manual-record-heading">手动记录 · 不会被摘要覆盖</h2><div class="purchase-detail-meta"><span class="purchase-status">'+esc(PURCHASE_STATUS[r.status])+'</span><span>预算：'+esc(r.budget||'尚未填写')+'</span><span>维护于 '+esc(r.updated.slice(0,10))+'</span></div><div class="purchase-detail-grid">'+
   purchaseSection('当前结论 · '+PURCHASE_ORIGIN[r.origin],purchaseText(r.conclusion,'还没有结论，先把需求留住。'),'purchase-summary-section')+
   purchaseSection('等待条件',purchaseText(r.wait_condition,'未设等待条件')+'<p class="purchase-review-date">回看日期：'+esc(r.review_date||'未指定，按条件回看')+'</p>')+
   purchaseSection('需求与排除项',purchaseText(r.needs),'purchase-detail-wide')+
@@ -58,6 +66,7 @@ function renderPurchases(){
   $('purchase-list').innerHTML=selected?purchaseDetail(selected):'<div class="purchase-empty"><h2>'+(purchaseState.records.length?'没有匹配的记录':'把还没决定的购买留在这里')+'</h2><p>'+(purchaseState.records.length?'换个关键词或状态试试。':'在左侧新建事项，记下需求、预算和等待条件。到了决策时，再交给 Claudian 调研。')+'</p>'+(!purchaseState.records.length?'<button data-purchase-new>新建购买事项</button>':'')+'</div>';
   purchaseDetailFingerprint=detailKey;
  }
+ if(typeof paintSummaries==='function')paintSummaries();
 }
 function selectPurchase(id){
  if(!purchaseVisible().some(r=>r.id===id))return;

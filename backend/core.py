@@ -5,6 +5,7 @@ from runtime import ROOT,BUNDLE,CONFIG,VAULT,MEDIA,PRIVATE,PYTHON,SCRIPTS,OBSIDI
 from storage import read_json,atomic_json
 from home import Homepage
 from appearance import read_mode,save_mode
+from media_cleanup import cleanup_media
 TERMINAL={'completed','skipped','cancelled'}
 HOME_CARDS=('status','next','douyin','materials','purchases','health')
 LEGACY_HOME_CARDS=('status','next','focus','douyin','later','materials','purchases','health')
@@ -285,8 +286,12 @@ class Service:
         self.purchases=Purchases(self.store,self.vault)
         from health import Health
         self.health=Health(self.store,self.home)
+        from illness import Illness
+        self.illness=Illness(self.store)
         from action_ideas import ActionIdeas
         self.ideas=ActionIdeas(self,ROOT,discover_codex)
+        from summaries import Summaries
+        self.summaries=Summaries(self,ROOT,discover_codex)
         self.import_local();self.refresh_notes()
         if start_worker:threading.Thread(target=self.worker,daemon=True).start()
     def import_local(self):
@@ -359,7 +364,7 @@ class Service:
         return dict(videos=videos,jobs=jobs,folders=self.store.rows('SELECT * FROM folders ORDER BY name'),membership=self.store.rows('SELECT * FROM membership'),
                     browser=read_json(PRIVATE/'browser-state.json',dict(status='closed')),sync=json.loads(self.store.setting('sync_result','{}')),
                     syncing=self.sync_lock.locked(),sync_progress=self.sync_status()['progress'],authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
-                      action_running=self.ideas.busy,appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),module_order=self.module_order(),topics=self.snapshot_topics(),url=getattr(self,'origin',''),vault=self.vault.name)
+                      action_running=self.ideas.busy or self.summaries.busy,appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),module_order=self.module_order(),topics=self.snapshot_topics(),url=getattr(self,'origin',''),vault=self.vault.name)
     def sync_status(self):
         started=getattr(self,'sync_started',0);running=self.sync_lock.locked()
         browser=read_json(PRIVATE/'browser-state.json',{})
@@ -620,7 +625,24 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
                 if destination.exists():raise RuntimeError('原始资料归档目标已存在，停止移动并待核对')
                 self.run_command([OBSIDIAN,f'vault={self.vault.name}','move',f'path={rawrel}',f'to={relative(destination,self.vault)}'],run/'obsidian-move.log',timeout=30)
                 if raw_path.exists() or not destination.exists():raise RuntimeError('Obsidian归档尚未完成，需复核')
+                raw_path=destination
+            atomic_json(run/'publish-journal.json',dict(note=noterel,raw=relative(raw_path,self.vault),
+                note_sha256=hashlib.sha256(note.read_bytes()).hexdigest(),raw_sha256=hashlib.sha256(raw_path.read_bytes()).hexdigest()))
             return noterel
+    def cleanup_job_media(self,jid,vid,run,note):
+        # Cleanup failure must not turn a successfully published note into a failed job.
+        try:
+            with self.write_lock:
+                statuses=[j['status'] for j in self.store.rows('SELECT status FROM jobs WHERE video=?',(vid,))]
+                result=cleanup_media(MEDIA,self.vault,vid,run,note,statuses)
+            atomic_json(run/'cleanup.json',result)
+            message=f'已入库；已清理中间素材 {result["bytes"]/1024**2:.1f} MiB'
+            if result['protected']:message+='；笔记引用的素材保留'
+            if result['errors']:message+='；部分文件占用，未清理'
+        except Exception as error:
+            with contextlib.suppress(OSError):atomic_json(run/'cleanup.json',dict(error=type(error).__name__,message=str(error)))
+            message='已入库；素材清理未完成，详情见本机 cleanup.json'
+        self.update_job(jid,message=message)
     def process_job(self,j):
         jid,vid=j['id'],j['video'];run=ROOT/'data/jobs'/jid;run.mkdir(parents=True,exist_ok=True)
         self.update_job(jid,status='running',stage='dedup',message='按精确视频ID查重',attempt=j['attempt']+1)
@@ -661,6 +683,7 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
         self.update_job(jid,stage='publish',message='校验后入库；不覆盖已有笔记')
         note=self.publish(vid,r,d,run)
         self.update_job(jid,status='completed',stage='done',message='笔记、索引及处理日志已写入',note=note);self.refresh_notes()
+        self.cleanup_job_media(jid,vid,run,note)
     def worker(self):
         while not self.stop.is_set():
             # Clear before reading state so a command between query and wait is not lost.
@@ -675,6 +698,9 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
                 self.update_job(j['id'],status='failed',message=str(e)[:400])
                 if self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage'] in ('gpt','components'):self.store.set_setting('paused','1')
     def action(self,name,payload):
+        if name=='summary_refresh':return self.summaries.start(payload)
+        if name in ('enqueue','retry','place','resume','action_generate') and self.summaries.busy:
+            raise ValueError('摘要正在生成，请完成后再启动模型任务')
         if name=='action_generate':return self.ideas.start(payload)
         if name=='action_mark':return self.ideas.mark(payload)
         if name in ('enqueue','retry','place','resume') and self.ideas.busy:
@@ -684,6 +710,8 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             # Compatibility with older renderers: never scan or start a browser.
             return dict(ok=True,local_notes=None,remote='disabled')
         if name=='health_save':return self.health.save(payload)
+        if name=='illness_save':return self.illness.save(payload)
+        if name=='illness_delete':return self.illness.delete(payload)
         if name=='health_sync':return self.health.sync()
         if name=='module_order':
             order=rail_order(payload.get('order'))
@@ -695,9 +723,11 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             order=home_order(payload.get('order'))
             self.store.set_setting('home_card_order',json.dumps(order))
             return dict(ok=True,order=order)
-        if name in ('open_note','open_home_note','open_purchase_note'):
+        if name in ('open_note','open_home_note','open_purchase_note','open_summary_note'):
             # Resolve only an existing workbench record, never a caller-supplied file path.
-            if name=='open_home_note':
+            if name=='open_summary_note':
+                note=self.summaries.reference(payload.get('scope'),payload.get('source'))
+            elif name=='open_home_note':
                 note=self.home.reference(str(payload.get('source','')))
             elif name=='open_purchase_note':
                 note=self.purchases.reference(str(payload.get('id','')))
@@ -712,7 +742,7 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             path=(self.vault/note).resolve()
             try:rel=path.relative_to(self.vault.resolve())
             except ValueError:raise ValueError('笔记路径不在当前知识库内')
-            allowed=('处理文件','输出文件') if name in ('open_home_note','open_purchase_note') else ('处理文件','原始资料')
+            allowed=('处理文件','输出文件') if name in ('open_home_note','open_purchase_note','open_summary_note') else ('处理文件','原始资料')
             if rel.parts[0] not in allowed or path.suffix!='.md' or not path.is_file():
                 raise ValueError('笔记不存在或不是可打开的入库笔记；请重新检查入库状态')
             logfile=ROOT/'data/open-note.log'

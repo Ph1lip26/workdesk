@@ -79,4 +79,14 @@ test('refresh feedback distinguishes elapsed work, partial proof and success',()
  assert.match(complete.title,/刷新完成/);assert.match(complete.title,/12/);
  const failed=get("syncFeedback({syncing:false,sync:{ok:false,updated:123}})");assert.match(failed.title,/原有收藏已保留/);
 });
+test('current queue hides success without mutating history',()=>{
+ const jobs=['queued','running','needs_review','failed','cancelled','completed','skipped'].map((status,i)=>({id:String(i),status}));
+ context.queueFixture=jobs;
+ assert.deepEqual(get('queueItems(queueFixture).map(j=>j.status)'),['queued','running','needs_review','failed','cancelled']);
+ assert.equal(jobs.length,7);assert.equal(get('queueItems([]).length'),0);
+});
+test('library defaults to unsaved with all and saved still available',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../backend/static/index.html'),'utf8');
+ assert.match(html,/<option value="new" selected>/);assert.match(html,/<option value="all">/);assert.match(html,/<option value="done">/);
+});
 console.log(passed+' frontend logic tests passed.');

@@ -14,6 +14,7 @@ const sourceButton=(id,label='打开资料')=>'<button class="home-source quiet"
 const validHomeOrder=order=>Array.isArray(order)&&order.length===HOME_CARD_IDS.length&&order.every(x=>HOME_CARD_IDS.includes(x))&&new Set(order).size===order.length;
 function selectModule(name,{animate=true}={}){
  if(!moduleRegistry[name])return;
+ if(name!==currentModule)closeWorkDetail({focus:false});
  if(typeof closeWeightTooltip==='function')closeWeightTooltip();
  finishHomeDrag(true);clearHomeLandingGhosts();
  const ws=document.querySelector('.workspace');moduleScroll[currentModule]=ws.scrollTop;
@@ -49,7 +50,7 @@ function homeRows(entries,kind,{compact=false}={}){
 function renderHomepage(){
  if(homeDrag||homeLandingGhosts.size){homeDeferredRender=true;return}
  const data=homeState;if(!data)return;homeDeferredRender=false;
- const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="重新读取首页">'+homeRefresh+'</button></div></header>';
+ const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="更新知识库摘要，使用Codex额度">'+homeRefresh+'<span>更新摘要</span></button></div></header>';
  const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin" data-go-source="favorites">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
  const materialsTile=()=>homeTile('materials','本地素材','<div id="home-material-summary"><p class="tile-note">正在读取素材记录…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-source="local">查看全部素材'+homeArrow+'</a><span>内容记录</span>');
  const healthTile=()=>homeTile('health','个人健康','<div id="home-health-summary"><p class="tile-note">尚未记录体重</p></div>','<a class="home-source quiet module-entry" href="#health" data-go-module="health">查看体重'+homeArrow+'</a>');
@@ -62,33 +63,31 @@ function renderHomepage(){
  const overview=data.overview||[],upcoming=data.schedule;
  const attention=[...data.waiting.filter(x=>!x.deferred).map(x=>({...x,kind:'waiting'})),...data.projects.filter(x=>x.attention).map(x=>({...x,kind:'projects'}))];
  const later=[...data.projects.filter(x=>x.deferred).map(x=>({...x,kind:'projects'})),...data.waiting.filter(x=>x.deferred).map(x=>({...x,kind:'waiting'}))];
- const phase='<div class="tile-phase"><h3>'+esc(data.stage.title||'当前阶段')+'</h3><p>'+esc(data.stage.subtitle)+'</p></div>';
- const statusBody=phase+(overview.length?'<div class="status-grid">'+overview.slice(0,4).map(o=>'<button class="status-record" data-home-detail="overview:'+esc(o.id)+'"><strong>'+esc(o.title)+'</strong><span>'+esc(o.summary)+'</span></button>').join('')+'</div>':'<p class="tile-note">'+esc(data.stage.focus)+'</p>')+'<p class="tile-evidence">'+(data.reported_until?'最新实报 '+esc(data.reported_until):'实报日期未提供')+'</p>';
- const route=data.stages.map(s=>s.title).join(' → ');
- const nextBody=upcoming.length?upcoming.map(item=>'<button class="tile-record schedule-record" data-home-detail="schedule:'+esc(item.id)+'"><span class="schedule-date">'+(item.status==='待确认'?'原 ':'')+esc(item.date.slice(5).replace('-','/'))+'</span><span class="schedule-copy"><span class="tile-record-top"><small>'+(item.status==='待确认'?'日期待确认':'计划')+' · '+esc(item.category)+'</small></span><span class="tile-record-summary">'+esc(item.title)+'</span></span>'+homeArrow+'</button>').join(''):'<p class="tile-note">近期没有明确日期的安排</p>';
+ const statusBody='<div id="home-current-brief" class="home-brief"><p class="tile-note">点击更新摘要，提炼当前状态。</p></div>';
+ const nextBody='<div id="home-next-brief" class="home-brief"><p class="tile-note">点击更新摘要，提取近期已有安排。</p></div>';
+ const route='';
  const focusBody=attention.length?attention.slice(0,2).map(x=>homeRows([x],x.kind,{compact:true})).join(''):'<p class="tile-note">暂无待确认事项</p>';
  const laterBody=later.length?later.slice(0,2).map(x=>homeRows([x],x.kind,{compact:true})).join(''):'<p class="tile-note">暂无明确的稍后计划</p>';
  const more=(kind,count,label)=>'<button class="home-source quiet" data-home-list="'+kind+'">'+(count>2?'全部 '+count+' 项':label)+homeArrow+'</button>';
  const tiles=[
-  homeTile('status','当前状态',statusBody,'<span class="stage-line">'+esc(route)+'</span>'+sourceButton(data.stage.source,'查看状态')),
-  homeTile('next','近期安排',nextBody,more('next',data.schedule.length,'查看安排')+'<span>已有记录</span>'),
+  homeTile('status','当前状态',statusBody,sourceButton(data.stage.source,'原始记录')),
+  homeTile('next','近期安排',nextBody,'<button id="summary-home-details" class="home-source quiet">来源与提示'+homeArrow+'</button>'),
   moduleTile(),
   materialsTile(),purchaseTile(),healthTile()
  ];
- $('homeview').innerHTML=head+'<p id="home-drag-help" class="sr-only">拖动右上角换位置。键盘空格或回车拿起，方向键移动，回车放下，Escape取消。</p><div id="home-cards" class="home-card-grid" role="list" aria-label="个人状态卡片">'+tiles.join('')+'</div><p id="home-layout-status" class="sr-only" role="status" aria-live="polite"></p>';
+ $('homeview').innerHTML=head+'<p id="summary-home-status" class="summary-status" role="status"></p><p id="home-drag-help" class="sr-only">拖动右上角换位置。键盘空格或回车拿起，方向键移动，回车放下，Escape取消。</p><div id="home-cards" class="home-card-grid" role="list" aria-label="个人状态卡片">'+tiles.join('')+'</div><p id="home-layout-status" class="sr-only" role="status" aria-live="polite"></p>';
  syncHomeOrder();renderHomepageSummary();applyHomeOrder(homeOrder);
 }
 function renderHomepageSummary(){
  if(homeDrag||homeLandingGhosts.size)return;
  if(typeof renderPurchaseHome==='function')renderPurchaseHome();
  if(typeof renderHealthHome==='function')renderHealthHome();
- const pt=$('home-purchases-summary');if(pt){const records=typeof purchaseState!=='undefined'?purchaseState?.records:[];const n=records?.filter(r=>!['decided','shelved'].includes(r.status)).length;const html='<div class="collection-total"><strong>'+(n??'—')+'</strong><span>项待决定</span></div><p class="tile-note">'+esc(records?.[0]?.title||'保存需求与上次结论')+'</p>';if(pt.dataset.content!==html){pt.innerHTML=html;pt.dataset.content=html}}
  if(homeDrag)return;
  const target=$('home-module-summary');if(!target)return;if(!state){for(const el of [target,$('home-material-summary')])if(el){el.innerHTML='<p class="tile-note">数据尚未连接，不显示推测数值。</p>';delete el.dataset.content}return}
  const favorites=state.videos.filter(v=>v.favorite),done=favorites.filter(saved).length;
- const running=state.jobs.filter(j=>['running','queued'].includes(j.status)).length,review=state.jobs.filter(j=>j.status==='needs_review').length;
+ const running=state.jobs.filter(j=>['running','queued'].includes(j.status)).length,review=state.jobs.filter(j=>j.status==='needs_review').length,failed=state.jobs.filter(j=>j.status==='failed').length;
  const latest=state.jobs.filter(j=>j.note&&['completed','skipped'].includes(j.status)).sort((a,b)=>b.updated-a.updated)[0];
- const html='<div class="collection-total"><strong>'+favorites.length+'</strong><span>条收藏</span></div><p class="collection-meta">已入库 '+done+' · 未入库 '+(favorites.length-done)+(running?' · 处理中 '+running:'')+(review?' · 待归类 '+review:'')+'</p>'+(latest?'<button class="latest-note quiet" data-open-job="'+esc(latest.id)+'"><span>最近入库</span><strong>'+esc(cleanTitle(state.videos.find(v=>v.id===latest.video)?.title||'知识笔记'))+'</strong>'+homeArrow+'</button>':'<p class="tile-note">选择值得留下的内容</p>');
+ const html='<div class="collection-total"><strong>'+favorites.length+'</strong><span>条收藏</span></div><p class="collection-meta">已入库 '+done+' · 未入库 '+(favorites.length-done)+(running?' · 处理中 '+running:'')+(review?' · 待归类 '+review:'')+'</p>'+((failed||review)?'<button class="home-source quiet" data-home-queue>'+ (failed?failed+' 项失败待处理':review+' 项等待归类')+homeArrow+'</button>':'')+(latest?'<button class="latest-note quiet" data-open-job="'+esc(latest.id)+'"><span>最近入库</span><strong>'+esc(cleanTitle(state.videos.find(v=>v.id===latest.video)?.title||'知识笔记'))+'</strong>'+homeArrow+'</button>':'<p class="tile-note">选择值得留下的内容</p>');
  if(target.dataset.content!==html){target.innerHTML=html;target.dataset.content=html}
  const materialTarget=$('home-material-summary');
  if(materialTarget){
@@ -96,7 +95,7 @@ function renderHomepageSummary(){
   const materialHtml='<div class="material-total"><strong>'+state.videos.length+'</strong><span>条内容记录</span></div><p class="material-meta">已入库 '+allDone+' · 未入库 '+(state.videos.length-allDone)+'</p><p class="tile-note material-note">包含收藏与已处理内容</p>';
   if(materialTarget.dataset.content!==materialHtml){materialTarget.innerHTML=materialHtml;materialTarget.dataset.content=materialHtml}
  }
- syncHomeOrder();
+ syncHomeOrder();if(typeof paintSummaries==='function')paintSummaries();
 }
 function syncHomeOrder(){
  if(homeDrag||homePendingSaves||!state)return;
@@ -240,13 +239,13 @@ document.addEventListener('click',async e=>{
   return;
  }
  if(b.dataset.goSource){e.preventDefault();selectModule('douyin');selectSource(b.dataset.goSource);document.querySelector('.workspace').scrollTop=0;return}
- if(b.dataset.goModule){e.preventDefault();selectModule(b.dataset.goModule);return}
+ if(b.dataset.goModule){e.preventDefault();if(b.dataset.goModule==='health')selectHealthPage('weight');else selectModule(b.dataset.goModule);return}
  if(b.hasAttribute('data-home-queue')){e.preventDefault();openQueuePage();return}
  if(b.dataset.homeDetail){const [kind,...id]=b.dataset.homeDetail.split(':');showHomeDetail(kind,id.join(':'));return}
  if(b.dataset.homeList){showHomeList(b.dataset.homeList);return}
  if(b.dataset.homeSource){b.disabled=true;try{await api('open_home_note',{source:b.dataset.homeSource})}catch(err){toast(err.message)}finally{b.disabled=false}return}
  if(b.id==='home-reset'){finishHomeDrag(true);applyHomeOrder(HOME_CARD_IDS,true);await persistHomeOrder();return}
- if(b.id==='home-refresh')await refreshWithFeedback('home-refresh',async()=>{const libraryOK=await refresh(),homeOK=await refreshHomepage(),healthOK=await refreshHealth();return libraryOK!==false&&homeOK!==false&&healthOK!==false})
+
 });
 $('homemodule').onclick=()=>{if(currentModule!=='home')selectModule('home')};
 $('douyinmodule').onclick=()=>currentModule==='douyin'?toggleNavigation():selectModule('douyin');

@@ -33,12 +33,14 @@ function weightChart(records,mini=false){
 function renderHealthHome(){
  if(typeof homeDrag!=='undefined'&&homeDrag)return;
  const el=$('home-health-summary');if(!el)return;
+ const key=JSON.stringify([healthState?.records,healthUnit]);if(el.dataset.content===key)return;el.dataset.content=key;
  if(weightHoverChart&&el.contains(weightHoverChart))closeWeightTooltip();
  if(!healthState){el.innerHTML='<p class="tile-note">正在读取体重记录…</p>';return}
  const rows=healthState.records,last=rows.at(-1);
  el.innerHTML=last?'<div class="collection-total"><strong>'+weightNumber(last)+'</strong><span>'+weightUnitLabel()+'</span></div><p class="tile-evidence">'+esc(last.day)+' · '+weightOrigin(last)+'</p>'+weightChart(rows.slice(-30),true):'<p class="tile-note">还没有体重记录</p><button class="home-source quiet" data-health-add>＋ 记录一次体重</button>';
 }
 function renderHealth(){
+ if(typeof healthPage!=='undefined'&&healthPage==='illness'){renderIllness();return}
  const el=$('healthview');if(!el)return;
  if(weightHoverChart&&el.contains(weightHoverChart))closeWeightTooltip();
  const records=healthState?.records||[],last=records.at(-1),today=Date.parse(localDate()+'T00:00:00Z');
@@ -46,6 +48,7 @@ function renderHealth(){
  el.innerHTML='<header class="purchase-header"><div><p class="view-context">体重记录</p><h1>个人健康</h1></div><div class="purchase-header-actions"><button id="health-refresh" class="quiet">刷新</button><button data-health-add class="primary">＋ 记录体重</button></div></header>'+healthSyncNotice()+'<div class="health-summary purchase-section"><div><span class="muted">最新测量</span><div class="weight-current">'+(last?weightNumber(last):'—')+'<span>'+weightUnitLabel()+'</span></div><p class="tile-evidence">'+(last?esc(last.day)+' · '+weightOrigin(last):'尚未记录，不显示推测数值')+'</p></div><div class="health-unit-control"><label for="health-unit">显示单位</label><select id="health-unit"><option value="kg" '+(healthUnit==='kg'?'selected':'')+'>公斤</option><option value="jin" '+(healthUnit==='jin'?'selected':'')+'>斤</option></select></div></div><section class="purchase-section health-trend"><div class="health-section-heading"><h2>体重趋势</h2><label><span class="sr-only">趋势时间范围</span><select id="health-range">'+[['30','近30天'],['90','近90天'],['all','全部记录']].map(([v,t])=>'<option value="'+v+'" '+(healthRange===v?'selected':'')+'>'+t+'</option>').join('')+'</select></label></div>'+weightChart(visible)+'<p class="tile-evidence">按实际测量日期连接；同一天多次测量取最后录入的一次。空白日不补数，单次涨跌不判定为增脂或减脂。</p></section><section class="purchase-section"><div class="health-section-heading"><h2>历史记录</h2><span class="muted">'+records.length+'条 · 点击修改</span></div><div class="weight-history">'+(records.length?[...records].reverse().map(r=>'<button class="weight-row quiet" data-weight-edit="'+esc(r.id)+'"><span>'+esc(r.day)+'</span><strong>'+weightNumber(r)+' '+weightUnitLabel()+'</strong><span>'+weightOrigin(r)+' · 修改</span></button>').join(''):'<p class="tile-note">称完后手动记录一次，从第一条真实数据开始。</p>')+'</div></section><p class="tile-evidence">数据仅保存在本机。这里只记录体重，不做健康评分或诊断。</p>';
 }
 async function refreshHealth({sync=false}={}){
+ if(typeof healthPage!=='undefined'&&healthPage==='illness')return refreshIllness();
  if(healthBusy)return sync?healthRefreshPromise.then(()=>refreshHealth({sync:true})):healthRefreshPromise;
  healthBusy=true;
  healthRefreshPromise=(async()=>{

@@ -37,7 +37,9 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   }
   for(let n=0;n<80;n++){if(await js("typeof homeState!=='undefined'&&homeState?.configured&&document.querySelectorAll('.card').length===30"))break;await sleep(100)}
   check('native default page is personal home',await js("document.body.dataset.module==='home'&&!document.getElementById('homeview').hidden"));
-  check('homepage has a real stage and four current subjects',await js("document.querySelector('.tile-phase h3').textContent==='测试阶段'&&document.querySelectorAll('.status-record').length===4"));
+  check('homepage provides concise manual-refresh state and schedule slots',await js("$('home-current-brief')&&$('home-next-brief')&&$('home-refresh').textContent.includes('更新摘要')&&!document.querySelector('.status-record')"));
+  check('library starts with only unsaved works',await js("$('status').value==='new'"));
+  await js("$('status').value='all';$('status').dispatchEvent(new Event('change'))");
   check('homepage and library are separate registered modules',await js("Object.keys(moduleRegistry).length===4&&document.getElementById('douyinview').hidden"));
   check('home has six movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===6"));
   check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('modulepanel').inert"));
@@ -50,8 +52,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    await js("openQueuePage();state.jobs=['completed','skipped','running','failed','queued'].map((status,i)=>({id:'fixture-style-'+i,video:state.videos[0].id,status,message:'合成任务状态',updated:i}));jobsFingerprint='';render()");
    for(const mode of ['night','day']){
     await js(`paintAppearance('${mode}');updateNavigationMotion('on')`);await sleep(100);
-    check(mode+': completed and skipped show one SVG and no character check',await js("[...document.querySelectorAll('#jobs .badge.done')].length===2&&[...document.querySelectorAll('#jobs .badge.done')].every(b=>b.querySelectorAll('svg[data-lucide=check]').length===1&&['none','normal','\"\"'].includes(getComputedStyle(b,'::before').content)&&!b.textContent.includes('✓'))"));
-    check(mode+': single check is compact and aligned',await js("[...document.querySelectorAll('#jobs .badge.done')].every(b=>getComputedStyle(b).alignItems==='center'&&getComputedStyle(b.querySelector('svg')).width==='14px')"));
+    check(mode+': completed and skipped are omitted from current queue',await js("document.querySelectorAll('#jobs .badge.done').length===0"));
+    check(mode+': unfinished jobs remain visible',await js("document.querySelectorAll('#jobs .job').length===3"));
     check(mode+': only running task has an indeterminate bar',await js("document.querySelectorAll('#jobs .job-progress').length===1&&!document.querySelector('.job-progress').hasAttribute('aria-valuenow')"));
     const start=await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform");await sleep(180);
     check(mode+': local opt-in animates processing under reduced-motion OS',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform")!==start);
@@ -526,7 +528,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    check('day popup has readable dark ink and light surface',await js("getComputedStyle(document.getElementById('tools')).backgroundColor.startsWith('rgba(245, 245, 245,')&&getComputedStyle(document.getElementById('tools')).color==='rgb(35, 35, 35)'"));
    await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-tools.png'),img.toPNG()));
    await js("document.getElementById('tools').close()");
-   check('day home cards share one aluminium material',await js("(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundColor==='rgb(217, 217, 217)'&&c.backgroundImage.includes('feTurbulence'))&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
+   check('day home cards share one aluminium material',await js("(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundColor==='rgb(227, 227, 227)'&&!c.backgroundImage.includes('data:image'))&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
    for(const [width,height] of [[1440,920],[800,560]]){
     w.setContentSize(width,height);await sleep(180);
     check(`${width}: day home still fits one viewport`,await js("(()=>{const ws=document.querySelector('.workspace');return ws.scrollHeight<=ws.clientHeight+1&&document.documentElement.scrollWidth<=innerWidth})()"));
@@ -549,8 +551,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    const selected=await js('JSON.stringify([...selection])');
    await sleep(1300);w.minimize();desk.show();await sleep(500);
    check('restore retains library page and selected videos',await js("pageNumber===2&&JSON.stringify([...selection])==="+JSON.stringify(selected)));
-   check('day navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.rail-button.active')).backgroundImage.includes('feTurbulence')&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
-   check('day library and sidebar use dark ink',await js("getComputedStyle(document.querySelector('.card-title')).color==='rgb(35, 35, 35)'&&getComputedStyle(document.querySelector('.module-panel')).backgroundColor==='rgb(233, 233, 233)'"));
+   check('day navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.rail-button.active')).backgroundImage.includes('data:image/png')&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
+   check('day library and sidebar use dark ink',await js("getComputedStyle(document.querySelector('.card-title')).color==='rgb(35, 35, 35)'&&getComputedStyle(document.querySelector('.module-panel')).backgroundColor==='rgb(237, 237, 237)'"));
    await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-library.png'),img.toPNG()));
    await js("document.getElementById('queueopen').click()");
    check('day queue matches popup material',await js("getComputedStyle(document.getElementById('queuepanel')).color==='rgb(35, 35, 35)'"));
@@ -573,8 +575,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     check('explicit night ignores subsequent OS theme changes',await js("appearanceMode==='night'&&document.documentElement.dataset.appearance==='night'")&&w.getBackgroundColor().toLowerCase()==='#131415');
    }finally{nativeTheme.themeSource=originalTheme}
    await js("document.getElementById('homemodule').click()");await sleep(200);
-   check('night navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.rail-button.active')).backgroundImage.includes('feTurbulence')&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
-   check('night metal finish and opacity are preserved',await js("getComputedStyle(document.querySelector('.home-tile')).backgroundColor==='rgb(46, 48, 52)'&&getComputedStyle(document.querySelector('.home-tile')).backgroundImage.includes('feTurbulence')"));
+   check('night navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.rail-button.active')).backgroundImage.includes('data:image/png')&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
+   check('night metal finish and opacity are preserved',await js("getComputedStyle(document.querySelector('.home-tile')).backgroundColor==='rgb(48, 48, 48)'&&!getComputedStyle(document.querySelector('.home-tile')).backgroundImage.includes('data:image')"));
    check('opening does not reset tasks or card order',await js('JSON.stringify(state.jobs)')===jobsBefore&&await js('JSON.stringify(homeOrder)')===orderBefore);
    const setupTheme=require('electron').nativeTheme,savedTheme=setupTheme.themeSource;
    try{
@@ -624,7 +626,8 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'purchase-smoke.png'),img.toPNG()));
   await js("document.getElementById('homemodule').click()");await sleep(250);
   check('purchase work does not rewrite user home order',await js('JSON.stringify(homeOrder)'),homeOrderBefore);
-  check('home purchase summary counts active records',await js("document.querySelector('#home-purchases-summary strong').textContent==='1'"));
+  log.info('HOME_PURCHASE '+await js("$('home-purchases-summary').innerHTML"));
+  check('home purchase summary names the active decision',await js("document.querySelectorAll('#home-purchases-summary .purchase-brief-row').length===1&&document.querySelector('#home-purchases-summary strong').textContent===purchaseState.records.find(r=>r.status!=='archived').title"));
   if(process.env.WORKDESK_SMOKE_SCOPE==='purchases'){
    await js("document.querySelector('[data-home-card=purchases] .module-entry').click()");await navigationSettled();
    check('all decision titles live in the secondary panel',await js("document.querySelectorAll('#purchase-nav-list [data-purchase-select]').length===1&&!document.querySelector('#purchaseview .purchase-grid')&&document.getElementById('purchase-detail-title').textContent==='合成购买事项'"));
@@ -674,16 +677,16 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
      fs.writeFileSync(path.join(fixture,'home-viewport-failure.json'),JSON.stringify(viewportEvidence,null,2));
      await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'home-viewport-failure.png'),img.toPNG()));
     }
-    check(`${width}x${height} ${compact?'reordered':'default'}: native home fits one viewport`,await js("(()=>{const ws=document.querySelector('.workspace'),r=ws.getBoundingClientRect();return ws.scrollHeight<=ws.clientHeight+1&&[...document.querySelectorAll('#home-cards article')].every(c=>{const b=c.getBoundingClientRect(),foot=c.querySelector('.tile-foot').getBoundingClientRect();return b.bottom<=r.bottom&&c.scrollHeight<=c.clientHeight+1&&foot.bottom<=b.bottom})})()"));
+    check(`${width}x${height} ${compact?'reordered':'default'}: home fits normally and remains reachable in short windows`,await js("(()=>{const ws=document.querySelector('.workspace'),r=ws.getBoundingClientRect(),short=innerWidth<950&&innerHeight<650;return (short||ws.scrollHeight<=ws.clientHeight+1)&&[...document.querySelectorAll('#home-cards article')].every(c=>{const b=c.getBoundingClientRect(),foot=c.querySelector('.tile-foot').getBoundingClientRect();return (short||b.bottom<=r.bottom)&&c.scrollHeight<=c.clientHeight+1&&foot.bottom<=b.bottom})})()"));
    }
   }
   w.setContentSize(1440,920);await sleep(180);await js("applyHomeOrder(HOME_CARD_IDS)");
-  check('native homepage has opaque steel status material',await js("getComputedStyle(document.querySelector('[data-home-card=status]')).backgroundColor==='rgb(46, 48, 52)'&&getComputedStyle(document.querySelector('[data-home-card=status]')).backdropFilter==='none'"));
+  check('native homepage has opaque steel status material',await js("getComputedStyle(document.querySelector('[data-home-card=status]')).backgroundColor==='rgb(48, 48, 48)'&&getComputedStyle(document.querySelector('[data-home-card=status]')).backdropFilter==='none'"));
   check('native homepage header has no date or clock',await js("!document.querySelector('.home-top p,.home-top time')"));
-  check('native evidence date remains visible',await js("document.querySelector('.tile-evidence').textContent.includes('最新实报')"));
+  check('native summary evidence is accessible without generating',await js("$('summary-home-details')&&$('home-current-brief').textContent.includes('点击')"));
   check('native generic brand fallback is local and loaded',await js("(()=>{const img=document.querySelector('.workspace-logo');return img.complete&&img.naturalWidth===512&&img.getAttribute('src')==='/brand'})()"));
-  check('native large-window summaries use the revised readable hierarchy',await js("parseFloat(getComputedStyle(document.querySelector('.tile-record-summary')).fontSize)>=16&&parseFloat(getComputedStyle(document.querySelector('.collection-total strong')).fontSize)>parseFloat(getComputedStyle(document.querySelector('.tile-phase h3')).fontSize)"));
-  check('native cards have natural larger corners and one shared brushed metal finish',await js("parseFloat(getComputedStyle(document.querySelector('.home-tile')).borderRadius)>=28&&(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundImage.includes('feTurbulence')&&!c.backgroundImage.includes('repeating-linear-gradient'))&&new Set(s.map(c=>c.backgroundColor)).size===1&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
+  check('native large-window summary placeholders stay readable',await js("parseFloat(getComputedStyle($('home-current-brief').querySelector('p')).fontSize)>=14&&parseFloat(getComputedStyle(document.querySelector('.collection-total strong')).fontSize)>=28"));
+  check('native cards have natural larger corners and one shared brushed metal finish',await js("parseFloat(getComputedStyle(document.querySelector('.home-tile')).borderRadius)>=28&&(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>!c.backgroundImage.includes('data:image')&&!c.backgroundImage.includes('repeating-linear-gradient'))&&new Set(s.map(c=>c.backgroundColor)).size===1&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
   check('native local-material card shows records with honest wording',await js("document.querySelector('.material-total strong').textContent==='65'&&document.querySelector('.material-note').textContent.includes('包含收藏')"));
   check('native material cards have no backdrop filter workload',await js("getComputedStyle(document.querySelector('.home-tile')).backdropFilter==='none'&&getComputedStyle(document.body,'::before').pointerEvents==='none'"));
   // Real pointer input needs a settled, active window; the launcher itself is hidden.
@@ -710,7 +713,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()");await js("homeSaveChain");
   check('homepage layout leaves processing jobs unchanged',await js("JSON.stringify(state.jobs)")===homeJobsBefore);
   desk.show();await sleep(150);await wc.capturePage().then(img=>fs.writeFileSync(path.join(app.getPath('userData'),'native-home.png'),img.toPNG()));
-  await js("document.querySelector('[data-home-card=next] .tile-record').click()");check('homepage upcoming plan opens readable detail',await js("document.getElementById('homedetail').open&&document.getElementById('home-detail-content').textContent.includes('待确认')"));
+  await js("$('summary-home-details').click()");check('homepage upcoming summary opens source detail without quota',await js("$('homedetail').open&&$('home-detail-title').textContent==='摘要来源与提示'"));
   await js("document.getElementById('homedetail').close();document.getElementById('douyinmodule').click()");await sleep(300);
   check('module switch preserves mounted library',await js("document.body.dataset.module==='douyin'&&document.querySelectorAll('.card').length===30"));
   check('native window loaded local service',wc.getURL().startsWith(desk.origin));
@@ -877,6 +880,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('native glyph never flashes between delayed phases',reflow.glyph>.98);
   check('native reflow has no final geometry jump or stuck layout',reflow.clean&&reflow.endJump<2&&reflow.edge<1);
   await js("document.getElementById('douyinmodule').click()");await navigationSettled();
+  await js("$('status').value='all';$('status').dispatchEvent(new Event('change'))");
   check('first work is newest favorite',await js("document.querySelector('.card').dataset.id"),'1000000000000000001');
   check('existing note is recognized',await js("document.querySelector('.card').dataset.status"),'done');
   check('saved work can be selected for read-only action ideas',await js("!document.querySelector('.card input').disabled"));
