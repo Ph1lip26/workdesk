@@ -1,6 +1,7 @@
 /* Local decision memory. No price fetching, AI calls or inferred completion. */
 const PURCHASE_STATUS={research:'了解需求',waiting:'等待条件',ready:'准备决策',decided:'已决定',shelved:'暂不考虑'};
 const PURCHASE_ORIGIN={user:'用户记录',advice:'AI建议',source:'资料摘录'};
+let purchaseRefreshPromise=null;
 let purchaseState=null,purchaseBusy=false,purchaseEditing=null,purchaseDirty=false,purchaseSelectedId='',purchaseNavFingerprint='',purchaseDetailFingerprint='',purchaseSaving=false;
 const purchaseFields=['title','category','budget','needs','conclusion','wait_condition','questions','status','origin','review_date','source_note','source_url'];
 function purchaseVisible(){
@@ -83,11 +84,13 @@ function renderPurchaseHome(){
  el.innerHTML='购买决策夹'+(active.length?' · '+active.length:'')+homeArrow;
  el.title=active.length?active.slice(0,3).map(r=>r.title+'：'+PURCHASE_STATUS[r.status]).join('；'):'保存需求与等待条件';
 }
-async function refreshPurchases(){
- if(purchaseBusy)return false;purchaseBusy=true;
+function refreshPurchases(){
+ if(purchaseRefreshPromise)return purchaseRefreshPromise;
+ purchaseRefreshPromise=(async()=>{purchaseBusy=true;
  try{purchaseState=await api('purchases');$('purchase-error').hidden=true;renderPurchases();renderHomepageSummary();return true}
  catch(e){$('purchase-error').textContent='购买记录读取失败：'+e.message+'。已有数据未删除。';$('purchase-error').hidden=false;return false}
  finally{purchaseBusy=false}
+})().finally(()=>{purchaseRefreshPromise=null});return purchaseRefreshPromise;
 }
 function candidateEditor(c={}){
  const names={name:'候选名称',price:'记录价格',channel:'报价渠道',checked_at:'核价日期',url:'参考链接',notes:'备注'};

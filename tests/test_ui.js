@@ -13,6 +13,12 @@ vm.runInContext('state='+JSON.stringify(fixture),context);
 const get=expr=>JSON.parse(JSON.stringify(vm.runInContext(expr,context)));
 let passed=0;const test=(name,fn)=>{fn();passed++;console.log('PASS '+name)};
 test('hidden windows do not poll even with active work',()=>{assert.equal(get('statePollDelay(state,true)'),0)});
+test('repeated background read failures back off until next successful read',()=>{
+ assert.equal(get('statePollDelay(state,false,1)'),5000);
+ assert.equal(get('statePollDelay(state,false,3)'),20000);
+ assert.equal(get('statePollDelay(state,false,40)'),60000);
+ assert.equal(get('statePollDelay(state,true,40)'),0);
+});
 test('visible idle polling is slower but active jobs and login retain fast updates',()=>{
  assert.equal(get('statePollDelay({jobs:[]},false)'),15000);
  for(const state of [{jobs:[{status:'queued'}]},{jobs:[{status:'running'}]},{syncing:true},{authchecking:true},null]){

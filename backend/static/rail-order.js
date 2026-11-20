@@ -17,8 +17,7 @@ function applyRailOrder(order,animate=false,skip=null){
  if(ends)for(const [b,r] of before){
   if(b===railDrag?.button||b===skip)continue;
   const dy=r.top-ends.get(b).top;if(Math.abs(dy)<1)continue;
-  const a=b.animate([{transform:`translateY(${dy}px)`},{transform:'translateY(0px)'}],{duration:260,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});railMoves.set(b,a);
-  a.finished.then(()=>{if(railMoves.get(b)===a){railMoves.delete(b);a.cancel()}}).catch(()=>{});
+  settleMotion(railMoves,b,{transform:'translateY('+dy+'px)'},{transform:'none'},190);
  }
 }
 function syncRailOrder(){
@@ -52,8 +51,8 @@ async function finishRailDrag(cancel=false){
  if(d.ghost){
   const g=d.ghost,r=d.button.getBoundingClientRect();
   const done=()=>{g.remove();d.button.classList.remove('rail-drag-placeholder');railLanding=null;d.button.focus({preventScroll:true})};
-  if(!cancel&&navigationMotionEnabled()){
-   railLanding=g;g.animate([{transform:getComputedStyle(g).transform},{transform:`translate(${r.left-parseFloat(g.style.left)}px,${r.top-parseFloat(g.style.top)}px)`}],{duration:220,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'}).finished.catch(()=>{}).finally(done);
+  if(navigationMotionEnabled()&&document.hasFocus()){
+   railLanding=g;g.animate([{transform:getComputedStyle(g).transform},{transform:`translate(${r.left-parseFloat(g.style.left)}px,${r.top-parseFloat(g.style.top)}px)`}],{duration:170,easing:motionEase,fill:'both'}).finished.catch(()=>{}).finally(done);
   }else done();
  }
  if(!d.active){setTimeout(()=>{railConsumedClick=false},350);return}
@@ -82,5 +81,5 @@ document.addEventListener('lostpointercapture',e=>{if(e.target===$('modules')&&r
 $('modules').addEventListener('click',e=>{if(railConsumedClick&&e.isTrusted){e.preventDefault();e.stopImmediatePropagation();railConsumedClick=false}},true);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&railDrag){e.preventDefault();finishRailDrag(true)}});
 window.addEventListener('blur',()=>finishRailDrag(true));window.addEventListener('resize',()=>finishRailDrag(true));
-document.addEventListener('visibilitychange',()=>{if(document.hidden)finishRailDrag(true)});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){finishRailDrag(true);railLanding?.getAnimations().forEach(a=>a.cancel());railMoves.forEach(a=>a.cancel());railMoves.clear()}});
 syncRailOrder();

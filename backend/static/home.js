@@ -2,6 +2,7 @@
    Homepage content is read-only. Reordering persists only generic tile IDs. */
 const moduleRegistry={home:{title:'首页',view:'homeview',nav:null,button:'homemodule'},douyin:{title:'抖音收藏',view:'douyinview',nav:'douyinnav',button:'douyinmodule'},purchases:{title:'购买决策夹',view:'purchaseview',nav:'purchasenav',button:'purchasemodule'},health:{title:'个人健康',view:'healthview',nav:'healthnav',button:'healthmodule'}};
 const HOME_CARD_IDS=['status','next','douyin','materials','purchases','health'];
+let homeRefreshPromise=null;
 let currentModule='home',homeState=null,homeFingerprint='',homeBusy=false,homeDetail=null;
 let homeOrder=[...HOME_CARD_IDS],homeSavedOrder=[...HOME_CARD_IDS],homePendingSaves=0,homeSaveChain=Promise.resolve(),homeDrag=null,homeDeferredRender=false;
 const homeFlipAnimations=new Map(),homeLandingGhosts=new Set(),moduleScroll={home:0,douyin:0,purchases:0,health:0};
@@ -35,9 +36,8 @@ function selectModule(name,{animate=true}={}){
  updateNavigationToggle();ws.scrollTop=moduleScroll[name];
  if(name==='home'){refreshHomepage();renderHomepageSummary()}
  if(name==='purchases'&&typeof refreshPurchases==='function')refreshPurchases();
- if(name==='health'&&typeof refreshHealth==='function')refreshHealth();
- if(animate)animateModuleGlyph(name);
- if(animate)animateModuleView($(moduleRegistry[name].view));else clearModuleViewAnimations();
+  if(name==='health'&&typeof refreshHealth==='function'){if(healthState)renderHealth();refreshHealth()}
+ if(animate&&name!=='douyin')animateModuleGlyph(name);
 }
 function homeTile(id,title,body,footer='',wide=false){
  const moduleCard=['douyin','materials','health','purchases'].includes(id);
@@ -102,13 +102,18 @@ function syncHomeOrder(){
  const order=validHomeOrder(state.home_card_order)?state.home_card_order:HOME_CARD_IDS;
  homeSavedOrder=[...order];if(JSON.stringify(homeOrder)!==JSON.stringify(order))applyHomeOrder(order);
 }
-async function refreshHomepage(){
- if(homeBusy)return false;homeBusy=true;
- if(typeof refreshPurchases==='function'&&!$('purchaseeditor').open)refreshPurchases();
- try{const data=await api('home'),key=JSON.stringify(data);homeState=data;if(key!==homeFingerprint){renderHomepage();homeFingerprint=key}return true}
- catch(e){if(!homeState){homeState={configured:false,error:'个人资料读取失败：'+e.message};renderHomepage()}else toast(e.message);return false}
- finally{homeBusy=false}
+function refreshHomepage(){
+ if(homeRefreshPromise)return homeRefreshPromise;
+ homeRefreshPromise=(async()=>{
+  homeBusy=true;
+  try{
+   const [data]=await Promise.all([api('home'),typeof refreshPurchases==='function'&&!$('purchaseeditor').open?refreshPurchases():Promise.resolve()]);
+   const key=JSON.stringify(data);homeState=data;if(key!==homeFingerprint){renderHomepage();homeFingerprint=key}return true;
+  }catch(e){if(!homeState){homeState={configured:false,error:'个人资料读取失败：'+e.message};renderHomepage()}else toast(e.message);return false}
+  finally{homeBusy=false}
+ })().finally(()=>{homeRefreshPromise=null});return homeRefreshPromise;
 }
+
 function showHomeDetail(kind,id){
  const item=homeState?.[kind]?.find(s=>s.id===id);if(!item)return;
  homeDetail=item;$('home-detail-title').textContent=item.title;
@@ -130,7 +135,7 @@ function announceHomeLayout(text){if($('home-layout-status'))$('home-layout-stat
 function applyHomeOrder(order,animate=false){
  if(!validHomeOrder(order))return;
  const grid=$('home-cards');homeOrder=[...order];if(!grid)return;
- const cards=[...grid.children],moving=animate&&navigationMotionEnabled(),before=moving?new Map(cards.map(c=>[c,c.getBoundingClientRect()])):null,focused=document.activeElement;
+ const cards=[...grid.children],moving=animate&&quietMotionEnabled(),before=moving?new Map(cards.map(c=>[c,c.getBoundingClientRect()])):null,focused=document.activeElement;
  homeFlipAnimations.forEach((a,c)=>{a.cancel();c.style.willChange=''});homeFlipAnimations.clear();
  const statusCard=cards.find(c=>c.dataset.homeCard==='status');
  statusCard?.classList.remove('home-tile-wide');statusCard?.classList.add('home-tile-compact');
@@ -143,9 +148,7 @@ function applyHomeOrder(order,animate=false){
   if(card===homeDrag?.card&&!homeDrag.keyboard)continue;
   const old=before.get(card),now=ends.get(card),dx=old.left-now.left,dy=old.top-now.top;
   if(Math.abs(dx)+Math.abs(dy)<1)continue;
-  card.style.willChange='transform';
-  const a=card.animate([{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'translate(0px,0px)'}],{duration:300,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
-  homeFlipAnimations.set(card,a);a.finished.then(()=>{if(homeFlipAnimations.get(card)===a){homeFlipAnimations.delete(card);card.style.willChange='';a.cancel()}}).catch(()=>{});
+  settleMotion(homeFlipAnimations,card,{transform:'translate('+dx+'px,'+dy+'px)'},{transform:'none'},240);
  }
 }
 function persistHomeOrder(){
@@ -196,11 +199,11 @@ function finishHomeDrag(cancel=false){
  else if(d.active&&JSON.stringify(d.before)!==JSON.stringify(homeOrder))persistHomeOrder();
  if(d.ghost){
   const g=d.ghost;
-  if(!cancel&&navigationMotionEnabled()){
+  if(quietMotionEnabled()&&document.hasFocus()){
    const r=d.card.getBoundingClientRect(),start=getComputedStyle(g).transform;g.landingCard=d.card;homeLandingGhosts.add(g);
    // Keep the original hidden until the identical preview lands. No double
    // exposure, shrinking fade or full homepage rebuild during this handoff.
-   g.animate([{transform:start},{transform:'translate('+r.left+'px,'+r.top+'px) scale(1)'}],{duration:360,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'}).finished.catch(()=>{}).finally(()=>{d.card.classList.remove('home-card-placeholder');g.remove();homeLandingGhosts.delete(g);if(!homeDrag&&!homeLandingGhosts.size){if(homeDeferredRender)renderHomepage();else renderHomepageSummary()}});
+   g.animate([{transform:start},{transform:'translate('+r.left+'px,'+r.top+'px) scale(1)'}],{duration:210,easing:motionEase,fill:'both'}).finished.catch(()=>{}).finally(()=>{d.card.classList.remove('home-card-placeholder');g.remove();homeLandingGhosts.delete(g);if(!homeDrag&&!homeLandingGhosts.size){if(homeDeferredRender)renderHomepage();else renderHomepageSummary()}});
   }else{g.remove();d.card.classList.remove('home-card-placeholder')}
  }
  if(d.active)d.handle.focus({preventScroll:true});
@@ -232,7 +235,7 @@ document.addEventListener('keydown',e=>{
  }
 });
 window.addEventListener('blur',()=>finishHomeDrag(true));window.addEventListener('resize',()=>{finishHomeDrag(true);applyHomeOrder(homeOrder)});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)finishHomeDrag(true);else if(currentModule==='home')refreshHomepage()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){finishHomeDrag(true);clearHomeLandingGhosts();applyHomeOrder(homeOrder)}else if(currentModule==='home')refreshHomepage()});
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button,a');if(!b){
   const card=e.target.closest('.home-module-card');if(card&&e.target.closest('.tile-body')&&!window.getSelection()?.toString()){selectModule(card.dataset.moduleRoute);if(card.dataset.homeCard==='materials')selectSource('local');else if(card.dataset.homeCard==='douyin')selectSource('favorites')}

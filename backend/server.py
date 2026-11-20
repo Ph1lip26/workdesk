@@ -31,7 +31,9 @@ def main():
                 self.send(200,image,kind)
             elif path in ('/brand.png','/favicon.ico'):
                 self.send(200,brand_png(ROOT,'mark.png' if path=='/brand.png' else 'icon.png',BUNDLE/'static/brand.png'),'image/png')
-            elif path=='/api/state':self.send(200,service.snapshot())
+            elif path=='/api/state':
+                query=parse_qs(urlparse(self.path).query)
+                self.send(200,service.snapshot(catalog=query.get('catalog',[None])[0],jobs_revision=query.get('jobs',[None])[0]))
             elif path=='/api/sync_status':self.send(200,service.sync_status())
             elif path=='/api/home':self.send(200,service.home.snapshot())
             elif path=='/api/summaries':self.send(200,service.summaries.snapshot())

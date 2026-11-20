@@ -1,23 +1,26 @@
-const token=document.querySelector('meta[name=workbench-token]').content;
+let token=document.querySelector('meta[name=workbench-token]').content;
 const $=id=>document.getElementById(id);
-let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',jobsFingerprint='',toastTimer,statePollTimer;
+let refreshPromise=null,refreshAgain=false,stateFailures=0;
+let indexedJobs,jobByVideo,indexedVideos,videoByID;
+let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',toastTimer,statePollTimer;
 let douyinPage='library',libraryScroll=0,queueScroll=0;
 let syncPending=false,syncObserved=false,syncLocalStarted=0,syncPollBusy=false,syncStatus=null,syncTransportError='';
 const PAGE_SIZE=30;
-function statePollDelay(snapshot,hidden){
+function statePollDelay(snapshot,hidden,failures=0){
  if(hidden)return 0;
+ if(failures)return Math.min(60000,5000*2**Math.min(failures-1,4));
  return !snapshot||snapshot.syncing||snapshot.authchecking||snapshot.jobs?.some(j=>['queued','running'].includes(j.status))?3500:15000;
 }
 function scheduleStatePoll(){
  clearTimeout(statePollTimer);
- const delay=statePollDelay(state,document.hidden);
+ const delay=statePollDelay(state,document.hidden,stateFailures);
  if(delay)statePollTimer=setTimeout(refresh,delay);
 }
 let pageNumber=1;
 let workDetailID='',workDetailKey='',workDetailScroll=0,workDetailFocus=null;
 function renderWorkDetail(){
  const host=$('work-detail');if(!host||!workDetailID||!state)return;
- const v=state.videos.find(v=>v.id===workDetailID);
+ const v=findVideo(workDetailID);
  if(!v){closeWorkDetail();return}
  const status=videoState(v),job=currentJob(v.id),key=JSON.stringify([v,status,job?.message,eligible(v),selection.has(v.id)]);
  if(key===workDetailKey)return;workDetailKey=key;
@@ -75,10 +78,18 @@ const check="<svg data-lucide=\"check\" aria-hidden=\"true\" xmlns=\"http://www.
 const moreIcon="<svg data-lucide=\"ellipsis\" aria-hidden=\"true\" xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" ><circle cx=\"12\" cy=\"12\" r=\"1\" /><circle cx=\"19\" cy=\"12\" r=\"1\" /><circle cx=\"5\" cy=\"12\" r=\"1\" /></svg>";
 const noteLink=p=>'obsidian://open?vault='+encodeURIComponent(state.vault)+'&file='+encodeURIComponent(p);
 const labels={queued:'待处理',running:'处理中',needs_review:'等待归类',failed:'处理失败',completed:'已完成',skipped:'已存在',cancelled:'已取消'};
+const failureStages={dedup:'入库查重',download:'素材下载',components:'解码检查',transcribe:'语音转写',frames:'画面抽取',gpt:'模型分析',placement:'主题归类',publish:'写入知识库'};
 const queueItems=jobs=>jobs.filter(j=>!['completed','skipped'].includes(j.status));
 const saved=v=>Boolean(v.note||v.raw);
 const cleanTitle=s=>String(s||'未命名视频').replace(/\s*#[^\s#]*/g,'').trim()||s;
-function currentJob(id){return state.jobs.find(j=>j.video===id)}
+function currentJob(id){
+ if(indexedJobs!==state.jobs){indexedJobs=state.jobs;jobByVideo=new Map();for(const job of indexedJobs)if(!jobByVideo.has(job.video))jobByVideo.set(job.video,job)}
+ return jobByVideo.get(id);
+}
+function findVideo(id){
+ if(indexedVideos!==state.videos){indexedVideos=state.videos;videoByID=new Map(indexedVideos.map(v=>[v.id,v]))}
+ return videoByID.get(id);
+}
 function videoState(v){if(saved(v))return {key:'done',label:'已入库'};const j=currentJob(v.id);if(j&&['queued','running','needs_review'].includes(j.status))return {key:'pending',label:labels[j.status]};if(j?.status==='failed')return {key:'failed',label:'处理失败'};return {key:'new',label:'未入库'}}
 function eligible(v){const j=currentJob(v.id);return !v.note&&(!j||!['queued','running','needs_review'].includes(j.status))}
 const selectable=v=>Boolean(v.note)||eligible(v);
@@ -93,8 +104,8 @@ function compareIDs(a,b){return a.id.length===b.id.length?b.id.localeCompare(a.i
 function visible(){const filter=$('status').value;const items=scopeItems().filter(v=>filter==='all'||(filter==='done'?saved(v):!saved(v)));const positions=folder?new Map(state.membership.filter(m=>m.folder===folder).map(m=>[m.video,m.position])):null;return items.sort((a,b)=>{if($('sort').value==='published')return (b.published_at||0)-(a.published_at||0)||compareIDs(a,b);if(view==='local'&&!folder)return compareIDs(a,b);const pa=positions?positions.get(a.id):a.favorite_position,pb=positions?positions.get(b.id):b.favorite_position;return (pa??Number.MAX_SAFE_INTEGER)-(pb??Number.MAX_SAFE_INTEGER)||compareIDs(a,b)})}
 function pageSlice(items){const pages=Math.max(1,Math.ceil(items.length/PAGE_SIZE));pageNumber=Math.min(Math.max(1,pageNumber),pages);return items.slice((pageNumber-1)*PAGE_SIZE,pageNumber*PAGE_SIZE)}
 function changePage(number){pageNumber=number;render();$('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true})}
-async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'X-Workbench-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});const out=await r.json();if(r.status===403){location.reload();throw Error('服务已更新，正在刷新页面')}if(!r.ok)throw Error(out.error||'请求未成功');return out}
-function toast(s){clearTimeout(toastTimer);const host=[...document.querySelectorAll('dialog[open]')].at(-1)||document.body;host.append($('toast'));$('toast').textContent=s;$('toast').style.display='block';toastTimer=setTimeout(()=>$('toast').style.display='none',4500)}
+async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'X-Workbench-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});const out=await r.json();if(r.status===403){throw Error('本机服务已更新；请先保存当前编辑，再重新加载界面')}if(!r.ok)throw Error(out.error||'请求未成功');return out}
+function toast(s){clearTimeout(toastTimer);const host=[...document.querySelectorAll('dialog[open]')].at(-1)||document.body;if($('toast').parentElement!==host)host.append($('toast'));$('toast').textContent=s;$('toast').style.display='block';toastTimer=setTimeout(()=>$('toast').style.display='none',4500)}
 async function action(name,data={}){try{const out=await api(name,data);fingerprint='';await refresh();return out}catch(e){toast(e.message);return null}}
 function syncFeedback(data,now=Date.now()){
  const running=syncPending||Boolean(data?.syncing),p=data?.progress||{},r=data?.sync||{};
@@ -107,7 +118,7 @@ function syncFeedback(data,now=Date.now()){
 }
 function paintSyncStatus(){
  const data=syncStatus||{syncing:state?.syncing,progress:state?.sync_progress,sync:state?.sync},f=syncFeedback(data);
- $('sync-status').hidden=!f;if(f){$('sync-stage').textContent=f.title;$('sync-elapsed').textContent=f.detail;$('sync-track').hidden=!f.running;$('sync-status').classList.toggle('running',f.running)}
+ $('sync-status').hidden=!f;if(f){$('sync-stage').textContent=f.title;$('sync-elapsed').textContent=f.detail;$('sync-track').hidden=!f.running||syncPending;$('sync-status').classList.toggle('running',f.running)}
  const running=Boolean(f?.running);$('sync').disabled=running;$('sync').querySelector('span').textContent=running?'刷新中…':'刷新收藏';$('sync').setAttribute('aria-busy',String(running));document.body.classList.toggle('is-syncing',running);
 }
 async function pollSyncStatus(){
@@ -125,10 +136,10 @@ async function startFavoritesRefresh(){
 }
 async function refreshWithFeedback(id,task){
  const button=$(id);if(!button||button.disabled)return;
- const started=performance.now(),label=button.textContent;button.disabled=true;button.setAttribute('aria-busy','true');button.classList.add('is-loading');button.textContent='正在刷新…';
+ const started=performance.now(),label=button.textContent;button.disabled=true;button.setAttribute('aria-busy','true');const indicator=setTimeout(()=>button.classList.add('is-loading'),200);button.textContent='正在刷新…';
  try{const ok=await task();if(ok!==false)toast(`内容已刷新 · 用时 ${((performance.now()-started)/1000).toFixed(1)} 秒`)}
  catch(e){toast('刷新未完成，原有内容保留：'+e.message)}
- finally{const current=$(id);if(current){current.disabled=false;current.removeAttribute('aria-busy');current.classList.remove('is-loading');current.textContent=label}}
+ finally{clearTimeout(indicator);const current=$(id);if(current){current.disabled=false;current.removeAttribute('aria-busy');current.classList.remove('is-loading');current.textContent=label}}
 }
 function renderNavigation(){
  const choice=douyinPage==='queue'?'queue':folder?'folder:'+folder:view;
@@ -220,16 +231,72 @@ function render(){
  }
  const candidates=items.filter(selectable),selectedVisible=candidates.filter(v=>selection.has(v.id)).length;
  $('selectall').disabled=!candidates.length;$('selectall').checked=candidates.length>0&&selectedVisible===candidates.length;$('selectall').indeterminate=selectedVisible>0&&selectedVisible<candidates.length;
- $('selectionbar').hidden=document.body.dataset.module!=='douyin'||douyinPage==='queue'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=![...selection].some(id=>{const v=state.videos.find(v=>v.id===id);return v&&eligible(v)});
- const ideaCount=[...selection].filter(id=>state.videos.find(v=>v.id===id)?.note).length;
+ $('selectionbar').hidden=document.body.dataset.module!=='douyin'||douyinPage==='queue'||!selection.size;$('selected').textContent='已选 '+selection.size+' 条';$('enqueue').disabled=![...selection].some(id=>{const v=findVideo(id);return v&&eligible(v)});
+ const ideaCount=[...selection].filter(id=>findVideo(id)?.note).length;
  $('ideas-from-selection').disabled=!ideaCount;$('ideas-from-selection').textContent='收藏转行动'+(ideaCount?'（'+ideaCount+'）':'');
- $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>state.videos.find(v=>v.id===id)?.raw)?'生成知识笔记':'加入知识库';
- const jobsKey=JSON.stringify([currentQueue,state.topics,currentQueue.map(j=>state.videos.find(v=>v.id===j.video)?.title)]);
- if(jobsKey!==jobsFingerprint){
- $('jobs').innerHTML=currentQueue.length?currentQueue.map(j=>{const v=state.videos.find(v=>v.id===j.video),badge=['completed','skipped'].includes(j.status)?'done':j.status==='failed'?'failed':'pending';return '<div class="job"><span class="badge '+badge+'">'+(badge==='done'?check:'')+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(cleanTitle(v?.title||j.video))+'</p><p class="job-message">'+esc(j.message)+'</p>'+(j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+(j.status==='needs_review'?'<select data-topic="'+j.id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+state.topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+'<div class="job-actions">'+(j.note?'<a data-open-job="'+j.id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+(['failed','cancelled'].includes(j.status)?'<button data-retry="'+j.id+'">重试</button>':'')+(j.status==='needs_review'?'<button data-place="'+j.id+'">确认归类</button>':'')+(!['completed','skipped','cancelled'].includes(j.status)?'<button data-cancel="'+j.id+'">取消</button>':'')+'<button data-preview="'+j.id+'">查看草稿</button></div></div>'}).join(''):'<p class="queue-empty">当前没有待处理或未成功的内容。</p>';
- jobsFingerprint=jobsKey;}
+ $('enqueue').querySelector('span').textContent=selection.size&&[...selection].every(id=>findVideo(id)?.raw)?'生成知识笔记':'加入知识库';
+ renderQueue(currentQueue);
 }
-async function refresh(){if(busy)return false;busy=true;clearTimeout(statePollTimer);try{state=await api('state');updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=state.videos.find(x=>x.id===id);if(!v||!selectable(v))selection.delete(id)}const {browser,sync_progress,...stable}=state;const next=JSON.stringify(stable);if(next!==fingerprint&&!navigationReflow&&!document.activeElement?.matches('[data-topic]')){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false;scheduleStatePoll()}}
+const queueMoves=new Map();
+function renderQueue(queue){
+ const host=$('jobs');
+ if(!queue.length){
+  if(host.contains(document.activeElement))$('queuepanel').focus({preventScroll:true});
+  queueMoves.forEach(a=>a.cancel());queueMoves.clear();
+  if(!host.querySelector('.queue-empty'))host.innerHTML='<p class="queue-empty">当前没有待处理或未成功的内容。</p>';
+  return;
+ }
+ const ids=new Set(queue.map(job=>job.id)),children=[...host.children];
+ const removed=children.filter(row=>!ids.has(row.dataset.job));
+ const before=new Map();
+ if(removed.length&&document.body.dataset.module==='douyin'&&douyinPage==='queue'&&quietMotionEnabled()){
+  for(const row of children)if(ids.has(row.dataset.job)){
+   const r=row.getBoundingClientRect();if(r.bottom>0&&r.top<innerHeight)before.set(row,r.top);
+  }
+ }
+ const lostFocus=removed.some(row=>row.contains(document.activeElement));
+ for(const row of removed){queueMoves.get(row)?.cancel();queueMoves.delete(row);row.remove()}
+ if(lostFocus)$('queuepanel').focus({preventScroll:true});
+ for(const row of before.keys()){queueMoves.get(row)?.cancel();queueMoves.delete(row)}
+ const rows=new Map([...host.children].map(row=>[row.dataset.job,row]));
+ let next=host.firstElementChild;
+ for(const j of queue){
+  const title=cleanTitle(findVideo(j.video)?.title||j.video),topics=j.status==='needs_review'?state.topics:[];
+  const message=(j.status==='failed'&&failureStages[j.stage]?failureStages[j.stage]+'：':'')+j.message;
+  const key=JSON.stringify([j.status,j.note,title,topics]);
+  let row=rows.get(j.id);
+  if(!row){row=document.createElement('div');row.className='job';row.dataset.job=j.id}
+  if(row.dataset.content!==key){
+   const previous=row.querySelector('[data-topic]'),topic=previous?.value;
+   const focused=previous&&previous===document.activeElement;
+   const id=esc(j.id),badge=j.status==='failed'?'failed':'pending';
+   row.innerHTML='<span class="badge '+badge+'">'+esc(labels[j.status]||j.status)+'</span><p class="job-title">'+esc(title)+'</p><p class="job-message">'+esc(message)+'</p>'+
+    (j.status==='running'?'<div class="job-progress" aria-label="正在处理"></div>':'')+
+    (j.status==='needs_review'?'<select data-topic="'+id+'" aria-label="选择主题"><option value="">选择已有主题</option>'+topics.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('')+'</select>':'')+
+    '<div class="job-actions">'+(j.note?'<a data-open-job="'+id+'" href="'+noteLink(j.note)+'">打开笔记</a>':'')+
+    (['failed','cancelled'].includes(j.status)?'<button data-retry="'+id+'">重试</button>':'')+
+    (j.status==='needs_review'?'<button data-place="'+id+'">确认归类</button>':'')+
+    (j.status!=='cancelled'?'<button data-cancel="'+id+'">取消</button>':'')+
+    '<button data-preview="'+id+'">查看草稿</button></div>';
+   row.dataset.content=key;
+   const field=row.querySelector('[data-topic]');
+   if(field&&topics.includes(topic))field.value=topic;
+   if(field&&focused)field.focus({preventScroll:true});
+  }
+  const copy=row.querySelector('.job-message');if(copy.textContent!==message)copy.textContent=message;
+  if(row!==next)host.insertBefore(row,next);
+  next=row.nextElementSibling;
+ }
+ const moves=[...before].map(([row,top])=>[row,top-row.getBoundingClientRect().top]);
+ for(const [row,dy] of moves)if(Math.abs(dy)>1)settleMotion(queueMoves,row,{transform:'translateY('+dy+'px)'},{transform:'none'},180);
+}
+
+async function readState(){busy=true;clearTimeout(statePollTimer);try{const patch=await api('state'+(state?.catalog_revision?'?catalog='+encodeURIComponent(state.catalog_revision)+'&jobs='+encodeURIComponent(state.jobs_revision||''):''));stateFailures=0;state={...state,...patch};updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=findVideo(id);if(!v||!selectable(v))selection.delete(id)}const {browser,sync_progress,videos,folders,membership,jobs,...stable}=state;const next=JSON.stringify([stable,state.jobs_revision?null:jobs]);if(next!==fingerprint&&!navigationReflow){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){stateFailures++;$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false;scheduleStatePoll()}}
+function refresh(){
+ if(refreshPromise){refreshAgain=true;return refreshPromise}
+ refreshPromise=(async()=>{let ok;do{refreshAgain=false;ok=await readState()}while(refreshAgain&&!document.hidden);return ok})().finally(()=>{refreshPromise=null});
+ return refreshPromise;
+}
 $('source').onchange=()=>selectSource($('source').value);
 $('modulepanel').addEventListener('click',e=>{const button=e.target.closest('[data-source]');if(button&&state)selectSource(button.dataset.source)});
 const compactNavigation=matchMedia('(max-width:1100px)');
@@ -239,27 +306,29 @@ let navigationAnimations=[];
 let navigationReflow=null,navigationGeneration=0;
 const railGlyphAnimations=new Map();
 const moduleGlyphAnimations=new Map();
-const moduleViewAnimations=new Map();
-function clearModuleViewAnimations(){moduleViewAnimations.forEach(a=>a.cancel());moduleViewAnimations.clear()}
-function animateModuleView(el){
- const previous=moduleViewAnimations.get(el),visible=previous?getComputedStyle(el).transform:null;
- clearModuleViewAnimations();if(!navigationMotionEnabled())return;
- const a=el.animate([{transform:visible&&visible!=='none'?visible:'translateY(3px)'},{transform:'translateY(0)'}],{duration:280,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
- moduleViewAnimations.set(el,a);
- a.finished.then(()=>{if(moduleViewAnimations.get(el)===a){moduleViewAnimations.delete(el);a.cancel()}}).catch(()=>{});
+const motionEase='cubic-bezier(.22,1,.36,1)';
+const quietMotionEnabled=()=>!document.hidden&&!reducedNavigationMotion.matches;
+function settleMotion(map,el,from,to,duration,easing=motionEase){
+ const a=el.animate([from,to],{duration,easing,fill:'both'});
+ map.set(el,a);
+ const release=()=>{if(map.get(el)===a){map.delete(el);a.cancel()}};
+ a.finished.then(release,release);
+ return a;
 }
-function animateModuleGlyph(name){
- if(!navigationMotionEnabled())return;
- const button=$(name==='home'?'homemodule':name==='health'?'healthmodule':name==='purchases'?'purchasemodule':'douyinmodule');
+function navigationDuration(){return document.body.dataset.navigationExpanded==='true'?260:220}
+function animateModuleGlyph(name,panel=false){
+ const button=$(moduleRegistry[name].button);
  const el=name==='douyin'?button.querySelector('.rail-symbol'):button.querySelector('svg');
- // One composited layer per icon. Do not transform individual SVG strokes,
- // rotate a bookmark, or restart unrelated icons during rapid module switches.
- const previous=moduleGlyphAnimations.get(el),visible=previous?getComputedStyle(el).transform:null;
+ const previous=moduleGlyphAnimations.get(el),start=getComputedStyle(el).transform;
  previous?.cancel();
- const start=previous&&visible!=='none'?visible:'translateY(2px) scale(.96)';
- const animation=el.animate([{transform:start},{transform:'translateY(0) scale(1)'}],{duration:360,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
- moduleGlyphAnimations.set(el,animation);
- animation.finished.then(()=>{if(moduleGlyphAnimations.get(el)===animation){moduleGlyphAnimations.delete(el);animation.cancel()}}).catch(()=>{});
+ if(!navigationMotionEnabled()||!el.animate)return;
+ const x=panel?(button.getAttribute('aria-expanded')==='true'?1:-1):0;
+ // No invented first pose: start from the visible ink, then move and settle.
+ const a=el.animate([{transform:start},{transform:'translateX('+x+'px) scale(1.035)',offset:.42},{transform:'none'}],
+  {duration:panel?navigationDuration():180,easing:'ease-in-out'});
+ moduleGlyphAnimations.set(el,a);
+ const release=()=>{if(moduleGlyphAnimations.get(el)===a)moduleGlyphAnimations.delete(el)};
+ a.finished.then(release,release);
 }
 function setRailGlyphState(expanded){
  const name=document.body.dataset.module;
@@ -270,26 +339,23 @@ function setRailGlyphState(expanded){
  const pieces=module.id!=='douyinmodule'?[]:[...module.querySelectorAll('.rail-symbol svg'),module.querySelector('.rail-panel-glyph path:first-of-type'),module.querySelector('.rail-panel-glyph path:last-child')];
  // Read the visible mid-flight state before cancelling: rapid reversal never
  // snaps to the previous endpoint. Only transforms/opacity are animated.
- const before=pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}});
+ const before=navigationMotionEnabled()?pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}}):[];
  railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();
  module.setAttribute('aria-expanded',String(expanded));
  if(!changed||!navigationMotionEnabled())return;
  const ends=pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}});
  pieces.forEach((el,i)=>{
-  const end=ends[i];
-  const animation=el.animate([before[i],end],{duration:i<2?(expanded?440:360):280,delay:[0,0,25,45,0][i],fill:'both',easing:'cubic-bezier(.16,1,.3,1)'});
-  railGlyphAnimations.set(el,animation);
-  animation.finished.then(()=>{if(railGlyphAnimations.get(el)===animation){railGlyphAnimations.delete(el);animation.cancel()}}).catch(()=>{});
+  settleMotion(railGlyphAnimations,el,before[i],ends[i],navigationDuration());
  });
 }
 function navigationMotionEnabled(){
  const mode=document.body.dataset.navigationMotion||'system';
- return mode==='on'||(mode!=='off'&&!reducedNavigationMotion.matches);
+ return !document.hidden&&(mode==='on'||(mode!=='off'&&!reducedNavigationMotion.matches));
 }
 function updateNavigationMotion(mode){
  mode=['system','on','off'].includes(mode)?mode:'system';
  if(document.body.dataset.navigationMotion!==mode){
-   stopNavigationAnimation();clearModuleViewAnimations();moduleGlyphAnimations.forEach(a=>a.cancel());moduleGlyphAnimations.clear();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();document.body.dataset.navigationMotion=mode;
+  clearNavigationEffects();document.body.dataset.navigationMotion=mode;
   document.documentElement.dataset.navigationMotion=mode;
  }
  $('navigationmotion').value=mode;
@@ -306,7 +372,9 @@ function gridColumnCount(){
  return value==='none'?0:value.split(/\s+/).length;
 }
 function transitionNavigation(change){
+ if(typeof closeWeightTooltip==='function')closeWeightTooltip();
  const workspace=document.querySelector('.workspace'),content=document.querySelector('.workspace-content'),grid=$('cards');
+ if(!navigationMotionEnabled()||!workspace.animate){stopNavigationAnimation();change();return}
  const before=content.getBoundingClientRect(),viewport=workspace.getBoundingClientRect(),gridBefore=grid.getBoundingClientRect();
  const nodes=document.body.dataset.module==='douyin'&&douyinPage==='library'?[...grid.querySelectorAll(':scope>.card')]:[];
  // Capture the actual displayed geometry, including an interrupted transition.
@@ -319,8 +387,8 @@ function transitionNavigation(change){
  const after=content.getBoundingClientRect();
  if(Math.abs(before.left-after.left)<1)return;
  const gridAfter=grid.getBoundingClientRect(),ends=nodes.map(card=>card.getBoundingClientRect());
- const generation=navigationGeneration,duration=340,easing='cubic-bezier(.22,1,.36,1)';
- const options={duration,easing,fill:'both'};
+ const generation=navigationGeneration,duration=navigationDuration();
+ const options={duration,easing:motionEase,fill:'both'};
  const originalGridStyle=grid.getAttribute('style'),styles=nodes.map(card=>card.getAttribute('style'));
  const scrollEnd=anchor&&scroll>0?Math.max(0,workspace.scrollTop+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
  let scrollFrame=0,userScrolled=false;
@@ -335,9 +403,8 @@ function transitionNavigation(change){
  const slide=content.animate([{transform:`translateX(${before.left-after.left}px)`},{transform:'translateX(0)'}],options);
  navigationAnimations=[slide];
  if(nodes.length){
-  grid.style.position='relative';grid.style.display='block';grid.style.height=gridAfter.height+'px';
-  // Only a scrolled list needs its scroll range interpolated to preserve the anchor.
-  if(scroll>0)navigationAnimations.push(grid.animate([{height:gridBefore.height+'px'},{height:gridAfter.height+'px'}],options));
+  grid.style.position='relative';grid.style.display='block';grid.style.height=Math.max(scroll>0?gridBefore.height:0,gridAfter.height)+'px';
+  // Keep the old scroll range available until settling; no height layout per frame.
   starts.forEach(({card,rect},i)=>{
    const end=ends[i];
    card.style.position='absolute';card.style.margin='0';card.style.left=(end.left-gridAfter.left)+'px';card.style.top=(end.top-gridAfter.top)+'px';
@@ -357,8 +424,7 @@ function transitionNavigation(change){
  }
  // Preserve the first visible work when opening the panel far down the list.
  if(scrollEnd!==scroll){
-  const started=performance.now(),ease=t=>1-Math.pow(1-t,4);
-  const track=now=>{if(generation!==navigationGeneration||userScrolled)return;const t=Math.min(1,(now-started)/duration);workspace.scrollTop=scroll+(scrollEnd-scroll)*ease(t);if(t<1)scrollFrame=requestAnimationFrame(track)};
+  const track=()=>{if(generation!==navigationGeneration||userScrolled)return;const t=slide.effect.getComputedTiming().progress??0;workspace.scrollTop=scroll+(scrollEnd-scroll)*t;if(t<1)scrollFrame=requestAnimationFrame(track)};
   scrollFrame=requestAnimationFrame(track);
  }
  const finish=()=>{
@@ -384,9 +450,6 @@ function updateNavigationToggle(){
  const home=document.body.dataset.module==='home';
  const hasPanel=['douyin','purchases','health'].includes(document.body.dataset.module);
  const expanded=hasPanel&&(compactNavigation.matches?compactPanelOpen:!panelCollapsed);
- // Commit the delay state before the glyph's computed-style reads flush layout.
- // Otherwise opening inherits the closing visibility delay: text fades while
- // hidden, then pops into view already almost opaque in native reduced motion.
  document.body.dataset.navigationExpanded=String(expanded);
  document.body.classList.toggle('nav-open',hasPanel&&compactNavigation.matches&&compactPanelOpen);
  $('panelhost').hidden=!hasPanel;
@@ -412,7 +475,7 @@ function toggleNavigation(){
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
  updateNavigationToggle();
  if(workDetailID)syncWorkDetailLayout();
- if(document.body.dataset.module!=='douyin')animateModuleGlyph(document.body.dataset.module);
+ if(document.body.dataset.module!=='douyin')animateModuleGlyph(document.body.dataset.module,true);
  });
 }
 $('closenav').onclick=()=>closeCompactNavigation(true);
@@ -420,14 +483,21 @@ $('douyinmodule').onclick=toggleNavigation;
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&compactPanelOpen&&!document.querySelector('dialog:modal')){e.preventDefault();closeCompactNavigation(true)}});
 document.addEventListener('click',e=>{if(!e.target.closest('#modulepanel,.module-rail,dialog')&&!document.querySelector('dialog:modal'))closeCompactNavigation()});
 compactNavigation.addEventListener('change',updateNavigationLayout);updateNavigationLayout();
-reducedNavigationMotion.addEventListener('change',()=>{if(!navigationMotionEnabled()){stopNavigationAnimation();moduleGlyphAnimations.forEach(a=>a.cancel());moduleGlyphAnimations.clear();railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear()}});
+function clearNavigationEffects(){
+ stopNavigationAnimation();
+ for(const map of [moduleGlyphAnimations,railGlyphAnimations]){map.forEach(a=>a.cancel());map.clear()}
+}
+reducedNavigationMotion.addEventListener('change',()=>{
+ if(!navigationMotionEnabled())clearNavigationEffects();
+ if(!quietMotionEnabled()){queueMoves.forEach(a=>a.cancel());queueMoves.clear()}
+});
 $('navigationmotion').onchange=async()=>{
  const mode=$('navigationmotion').value;
  const result=await action('navigation_motion',{mode});
  if(result)updateNavigationMotion(mode);else $('navigationmotion').value=document.body.dataset.navigationMotion||'system';
 };
 const resetPage=()=>{pageNumber=1;if(state)render()};
-$('search').oninput=resetPage;$('status').onchange=resetPage;$('sort').onchange=resetPage;
+$('search').oninput=resetPage;$('status').onchange=$('sort').onchange=resetPage;
 $('prevpage').onclick=()=>changePage(pageNumber-1);$('nextpage').onclick=()=>changePage(pageNumber+1);
 $('sync').onclick=startFavoritesRefresh;$('login').onclick=()=>action('login');$('openlogin').onclick=async()=>{const r=await action('open_login');if(r)toast('扫码完成后关闭窗口，刷新在后台进行')};$('refresh').onclick=()=>refreshWithFeedback('refresh',async()=>Boolean(await action('refresh')));
 $('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queue-refresh').onclick=()=>refreshWithFeedback('queue-refresh',refresh);$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
@@ -439,7 +509,7 @@ let enqueueIDs=[],enqueueBusy=false;
 function closeEnqueueConfirm(){if(!enqueueBusy)$('enqueueconfirm').close()}
 $('enqueue').onclick=()=>{
  if(enqueueBusy||$('enqueueconfirm').open)return;
- enqueueIDs=[...selection].filter(id=>{const v=state.videos.find(v=>v.id===id);return v&&eligible(v)});if(!enqueueIDs.length)return;
+ enqueueIDs=[...selection].filter(id=>{const v=findVideo(id);return v&&eligible(v)});if(!enqueueIDs.length)return;
  $('enqueue-count').textContent=String(enqueueIDs.length);
  $('enqueue-error').hidden=true;$('enqueue-submit').textContent='开始处理';
  $('enqueueconfirm').showModal();$('enqueue-cancel').focus({preventScroll:true});
@@ -474,7 +544,11 @@ for(const dialog of document.querySelectorAll('dialog')){
  dialog.addEventListener('pointerup',e=>{if(down===e.pointerId&&outside(e))close();down=null});
  dialog.addEventListener('pointercancel',()=>down=null);
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(statePollTimer);else refresh()});
+document.addEventListener('visibilitychange',()=>{
+ document.documentElement.dataset.motionHidden=String(document.hidden);
+ if(document.hidden){clearTimeout(statePollTimer);clearNavigationEffects();queueMoves.forEach(a=>a.cancel());queueMoves.clear()}
+ else refresh();
+});
 $('status').value='new'; // Reset the default once per load, not on polling or module switches.
 alignWorkspaceBrand();refresh();
 

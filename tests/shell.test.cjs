@@ -1,4 +1,25 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+test('overlapping refreshes share one promise and retain one trailing request',async()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../backend/static/app.js'),'utf8');
+ const start=source.indexOf('function refresh(){'),end=source.indexOf("\n$('source').onchange",start);
+ let calls=0,finish;
+ const context=vm.createContext({document:{hidden:false},readState:()=>{calls++;return new Promise(resolve=>finish=resolve)}});
+ vm.runInContext('let refreshPromise=null,refreshAgain=false;'+source.slice(start,end),context);
+ const first=vm.runInContext('refresh()',context),second=vm.runInContext('refresh()',context);
+ assert.equal(first,second);assert.equal(calls,1);
+ finish(true);await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,2);
+ finish(true);assert.equal(await first,true);
+});
+test('unchanged health refresh retains chart nodes and hover state',async()=>{
+ const source=fs.readFileSync(path.join(__dirname,'../backend/static/health.js'),'utf8');
+ const start=source.indexOf('async function refreshHealth('),end=source.indexOf('\nfunction openWeightEditor',start);
+ let renders=0;
+ const context=vm.createContext({currentModule:'health',api:async()=>({records:[]}),renderHealth:()=>renders++,renderHealthHome(){},toast(){}});
+ vm.runInContext("let healthBusy=false,healthRefreshPromise=null,healthState=null,healthFingerprint='',healthSyncResult=null;"+source.slice(start,end),context);
+ await vm.runInContext('refreshHealth()',context);await vm.runInContext('refreshHealth()',context);
+ assert.equal(renders,1);
+ await vm.runInContext('refreshHealth({sync:true})',context);assert.equal(renders,2);
+});
 function fixture(){
  const calls=[],messages=[],element={value:'night',disabled:false},root={dataset:{appearance:'night'}};
  let now=10000,openingListener,themeListener;const media={matches:false,addEventListener:(_name,fn)=>themeListener=fn};

@@ -3,11 +3,28 @@ sys.path.insert(0,str(__import__('pathlib').Path(__file__).resolve().parents[1]/
 import contextlib, io, json, hashlib, sqlite3, tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch,Mock
-from core import Store,Service,BrowserBridge,scan_notes,video_id,SCHEMA,IMAGE_SCHEMA,ROOT,topics,read_json,atomic_json,image_manifest
+from core import Store,Service,BrowserBridge,scan_notes,video_id,SCHEMA,IMAGE_SCHEMA,ROOT,topics,read_json,atomic_json,image_manifest,ItemAnalysisError,should_pause_after_failure
 from browser_worker import extract_response,atomic_json as browser_atomic_json,login_required_text,retry_collection_scroll,wait_until
 
 ID='1000000000000000001'
 class Tests(unittest.TestCase):
+    def test_one_item_analysis_failure_does_not_pause_other_queued_items(self):
+        self.assertFalse(should_pause_after_failure('gpt',ItemAnalysisError('差量校对原文不匹配')))
+        self.assertFalse(should_pause_after_failure('download',RuntimeError('当前视频下载失败')))
+        self.assertTrue(should_pause_after_failure('gpt',RuntimeError('Codex额度不足')))
+        self.assertTrue(should_pause_after_failure('components',RuntimeError('共享解码组件不可用')))
+    def test_worker_continues_after_one_item_analysis_failure(self):
+        s=self.service();second='1000000000000000002'
+        for vid in (ID,second):s.store.upsert(dict(id=vid,title='测试视频'))
+        s.store.enqueue([ID,second]);s.store.set_setting('paused','0')
+        def process(job):
+            s.update_job(job['id'],stage='gpt')
+            if job['video']==ID:raise ItemAnalysisError('差量校对原文不匹配')
+            s.update_job(job['id'],status='completed',stage='done');s.stop.set()
+        with patch.object(s,'process_job',side_effect=process):s.worker()
+        statuses={row['video']:row['status'] for row in s.store.rows('SELECT video,status FROM jobs')}
+        self.assertEqual(statuses,{ID:'failed',second:'completed'})
+        self.assertEqual(s.store.setting('paused'),'0')
     def setUp(self):
         # All artifacts stay inside the isolated runtime test directory.
         self.temp=tempfile.TemporaryDirectory(dir=ROOT/'data');self.root=Path(self.temp.name)

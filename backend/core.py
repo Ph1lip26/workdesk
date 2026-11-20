@@ -11,6 +11,12 @@ HOME_CARDS=('status','next','douyin','materials','purchases','health')
 LEGACY_HOME_CARDS=('status','next','focus','douyin','later','materials','purchases','health')
 RAIL_MODULES=('home','douyin','purchases','health')
 
+class ItemAnalysisError(RuntimeError):
+    """Model output failed validation for one item, not the shared model service."""
+
+def should_pause_after_failure(stage,error):
+    return stage=='components' or (stage=='gpt' and not isinstance(error,ItemAnalysisError))
+
 def rail_order(value):
     if not isinstance(value,list) or len(value)!=len(RAIL_MODULES) or any(not isinstance(x,str) for x in value) or set(value)!=set(RAIL_MODULES):
         raise ValueError('导航顺序必须包含全部功能且不能重复')
@@ -110,7 +116,15 @@ class Store:
             CREATE TABLE IF NOT EXISTS membership(folder TEXT,video TEXT,PRIMARY KEY(folder,video));
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,video TEXT,status TEXT,stage TEXT,message TEXT,created REAL,updated REAL,attempt INTEGER DEFAULT 0,topic TEXT DEFAULT '',result TEXT DEFAULT '',note TEXT DEFAULT '',cancel INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
+            CREATE TABLE IF NOT EXISTS state_versions(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
+            INSERT OR IGNORE INTO state_versions VALUES(1,0);
+            INSERT OR IGNORE INTO state_versions VALUES(2,0);
+            CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs(status,created);
+            CREATE INDEX IF NOT EXISTS jobs_video_status ON jobs(video,status);
             ''')
+            for table in ('videos','folders','membership','jobs'):
+                for event in ('INSERT','UPDATE','DELETE'):
+                    c.execute(f'CREATE TRIGGER IF NOT EXISTS state_version_{table}_{event} AFTER {event} ON {table} BEGIN UPDATE state_versions SET revision=revision+1 WHERE id={2 if table=="jobs" else 1}; END')
             columns={r['name'] for r in c.execute('PRAGMA table_info(videos)')}
             if 'favorite_position' not in columns:
                 c.execute('ALTER TABLE videos ADD COLUMN favorite_position INTEGER')
@@ -244,20 +258,34 @@ class BrowserBridge:
                 time.sleep(.7)
             return dict(ok=False,error_code='browser_closed',message='后台连接恢复失败；旧收藏已保留，请重试')
 
-def scan_notes(vault=VAULT):
+def note_sources(path,cache):
+    stat=path.stat();stamp=(stat.st_mtime_ns,stat.st_ctime_ns,stat.st_size,stat.st_ino)
+    if cache is not None and path in cache and cache[path][0]==stamp:return cache[path][1]
+    text=path.read_text(encoding='utf-8-sig')
+    head=text.split('---',2)[1] if text.startswith('---') and text.count('---')>=2 else ''
+    value=(source_ids(text),re.findall(r'\[\[([^\]|]+)',head))
+    if cache is not None:
+        if len(cache)>=2048:cache.pop(next(iter(cache)))
+        cache[path]=(stamp,value)
+    return value
+
+def scan_notes(vault=VAULT,cache=None,strict=False):
     """Exact source IDs first; processed notes may link to the exact raw file."""
     rawmap={};records={}
     for p in (vault/'原始资料').rglob('*.md'):
-        try:s=p.read_text(encoding='utf-8-sig');ids=source_ids(s)
-        except (OSError,UnicodeError):continue
+        try:ids,_=note_sources(p,cache)
+        except (OSError,UnicodeError):
+            if strict:raise RuntimeError('有原始笔记无法读取，未更新入库状态；请检查文件后重试')
+            continue
         for vid in ids:records.setdefault(vid,dict(raw=relative(p,vault),note=''));rawmap[p.stem]=vid;rawmap[relative(p,vault)]=vid
     for p in (vault/'处理文件').rglob('*.md'):
         if p.name.startswith('_'):continue
-        try:s=p.read_text(encoding='utf-8-sig')
-        except (OSError,UnicodeError):continue
-        ids=source_ids(s)
-        head=s.split('---',2)[1] if s.startswith('---') and s.count('---')>=2 else ''
-        for target in re.findall(r'\[\[([^\]|]+)',head):
+        try:direct,targets=note_sources(p,cache)
+        except (OSError,UnicodeError):
+            if strict:raise RuntimeError('有处理笔记无法读取，未更新入库状态；请检查文件后重试')
+            continue
+        ids=set(direct)
+        for target in targets:
             target=target.split('#')[0];vid=rawmap.get(target) or rawmap.get(Path(target).stem)
             if vid:ids.add(vid)
         for vid in ids:records.setdefault(vid,dict(raw='',note=''))['note']=relative(p,vault)
@@ -280,6 +308,8 @@ class Service:
     def __init__(self,store=None,vault=VAULT,start_worker=True):
         self.vault=Path(vault);self.store=store or Store(ROOT/'data/state.sqlite3');self.bridge=BrowserBridge();self.stop=threading.Event();self.wake=threading.Event();self.sync_lock=threading.Lock();self.auth_lock=threading.Lock();self.write_lock=threading.Lock()
         self.topic_lock=threading.Lock();self.topic_cache=None;self.topic_checked=0
+        self.catalog_instance=uuid.uuid4().hex
+        self.note_cache={};self.note_lock=threading.RLock()
         self.home=Homepage(self.vault,ROOT)
         self.sync_started=0;self.sync_phase=''
         from purchases import Purchases
@@ -292,7 +322,7 @@ class Service:
         self.ideas=ActionIdeas(self,ROOT,discover_codex)
         from summaries import Summaries
         self.summaries=Summaries(self,ROOT,discover_codex)
-        self.import_local();self.refresh_notes()
+        self.import_local();self.refresh_notes(keep_on_error=True)
         if start_worker:threading.Thread(target=self.worker,daemon=True).start()
     def import_local(self):
         for p in MEDIA.glob('*/meta.json'):
@@ -303,13 +333,21 @@ class Service:
             # authoritative metadata already reconciled from the favorites feed.
             if self.store.rows('SELECT id FROM videos WHERE id=?',(str(m['aweme_id']),)):continue
             self.store.upsert(dict(id=str(m['aweme_id']),title=m.get('desc',''),author=m.get('author',''),duration=m.get('duration',0),cover=m.get('cover_url') or '',kind=m.get('kind','video')))
-    def refresh_notes(self):
-        records=scan_notes(self.vault)
-        with self.store.connect() as c:
-            c.execute("UPDATE videos SET note='',raw=''")
-            for vid,r in records.items():c.execute('UPDATE videos SET raw=?,note=? WHERE id=?',(r['raw'],r['note'],vid))
+    def refresh_notes(self,keep_on_error=False):
+        with self.note_lock:
+            try:records=scan_notes(self.vault,self.note_cache,strict=True)
+            except (OSError,RuntimeError):
+                if keep_on_error:return None
+                raise
+            with self.store.connect() as c:
+                for old in c.execute('SELECT id,raw,note FROM videos').fetchall():
+                    r=records.get(old['id'],dict(raw='',note=''))
+                    if (old['raw'],old['note'])!=(r['raw'],r['note']):c.execute('UPDATE videos SET raw=?,note=? WHERE id=?',(r['raw'],r['note'],old['id']))
         with self.topic_lock:self.topic_cache=None
         return len(records)
+    def record_note(self,vid,note,raw=None):
+        with self.note_lock:
+            self.store.execute('UPDATE videos SET note=?,raw=COALESCE(?,raw) WHERE id=?',(note,raw,vid))
     def sync(self):
         if not self.sync_lock.acquire(False):raise ValueError('收藏同步已在进行')
         self.sync_started=time.time();self.sync_phase='connecting'
@@ -318,8 +356,9 @@ class Service:
                 result=self.bridge.request('sync',timeout=600)
                 self.sync_phase='saving'
                 self.store.apply_sync(result)
-                if result.get('ok'):self.refresh_notes()
+                notes_current=not result.get('ok') or self.refresh_notes(keep_on_error=True) is not None
                 safe={k:result.get(k) for k in ('ok','complete','folders_complete','message','response_count','pagination','folder_pages')};safe['count']=len(result.get('favorite_order',result.get('videos',[])));safe['updated']=time.time()
+                if not notes_current:safe['detail']='收藏已刷新；部分笔记无法读取，入库标记沿用上次结果，请检查后重新核对'
                 if result.get('ok'):
                     self.store.set_setting('last_success_sync',json.dumps(safe,ensure_ascii=False))
                     self.store.set_setting('account',json.dumps(dict(logged_in=True,needs_login=False,message='登录有效',updated=time.time()),ensure_ascii=False))
@@ -332,7 +371,9 @@ class Service:
             except Exception as e:
                 safe=self.failed_sync(str(e));safe['duration']=round(time.time()-self.sync_started,1)
                 self.store.set_setting('sync_result',json.dumps(safe,ensure_ascii=False))
-            finally:self.sync_lock.release()
+            finally:
+                self.sync_lock.release()
+                with contextlib.suppress(Exception):self.release_idle_browser()
         threading.Thread(target=run,daemon=True).start()
     def failed_sync(self,message,error_code=None):
         old=json.loads(self.store.setting('last_success_sync',self.store.setting('sync_result','{}')))
@@ -348,7 +389,9 @@ class Service:
                 if not result.get('ok'):result=dict(logged_in=False,needs_login=False,error_code='auth_check_failed',message='后台检查未成功，收藏已保留；请重试检查，不代表登录已失效')
                 result['updated']=time.time();self.store.set_setting('account',json.dumps(result,ensure_ascii=False))
             except Exception:self.store.set_setting('account',json.dumps(dict(logged_in=False,needs_login=False,error_code='auth_check_failed',message='登录检查未成功；收藏已保留，不代表登录已失效',updated=time.time()),ensure_ascii=False))
-            finally:self.auth_lock.release()
+            finally:
+                self.auth_lock.release()
+                with contextlib.suppress(Exception):self.release_idle_browser()
         threading.Thread(target=run,daemon=True).start()
     def snapshot_topics(self):
         # shortcut: menu metadata may lag 30s; publishing still validates live paths.
@@ -357,11 +400,20 @@ class Service:
             if self.topic_cache is None or now-self.topic_checked>=30:
                 self.topic_cache=topics(self.vault);self.topic_checked=now
             return list(self.topic_cache)
-    def snapshot(self):
-        videos=self.store.rows('SELECT * FROM videos ORDER BY favorite DESC,favorite_position IS NULL,favorite_position ASC,id DESC')
-        # Keep large evidence blobs in SQLite until the explicit preview request.
-        jobs=self.store.rows("SELECT id,video,status,stage,message,created,updated,attempt,topic,'' AS result,note,cancel FROM jobs ORDER BY created DESC LIMIT 300")
-        return dict(videos=videos,jobs=jobs,folders=self.store.rows('SELECT * FROM folders ORDER BY name'),membership=self.store.rows('SELECT * FROM membership'),
+    def snapshot(self,catalog=None,jobs_revision=None):
+        # Read revision and catalog in one transaction; a concurrent write belongs to the next poll.
+        with self.store.connect() as c:
+            c.execute('BEGIN')
+            revision=str(c.execute('SELECT revision FROM state_versions WHERE id=1').fetchone()[0])
+            revision=getattr(self,'catalog_instance','')+':'+revision
+            job_stamp=getattr(self,'catalog_instance','')+':'+str(c.execute('SELECT revision FROM state_versions WHERE id=2').fetchone()[0])
+            content={} if catalog==revision else dict(
+                videos=[dict(x) for x in c.execute('SELECT * FROM videos ORDER BY favorite DESC,favorite_position IS NULL,favorite_position ASC,id DESC')],
+                folders=[dict(x) for x in c.execute('SELECT * FROM folders ORDER BY name')],
+                membership=[dict(x) for x in c.execute('SELECT * FROM membership')])
+            # Keep large evidence blobs in SQLite until the explicit preview request.
+            if jobs_revision!=job_stamp:content['jobs']=[dict(x) for x in c.execute("SELECT id,video,status,stage,message,created,updated,attempt,topic,'' AS result,note,cancel FROM jobs WHERE status NOT IN ('completed','skipped') OR id IN (SELECT id FROM jobs ORDER BY created DESC LIMIT 300) ORDER BY created DESC")]
+        return dict(**content,catalog_revision=revision,jobs_revision=job_stamp,
                     browser=read_json(PRIVATE/'browser-state.json',dict(status='closed')),sync=json.loads(self.store.setting('sync_result','{}')),
                     syncing=self.sync_lock.locked(),sync_progress=self.sync_status()['progress'],authchecking=self.auth_lock.locked(),account=json.loads(self.store.setting('account','{}')),
                       action_running=self.ideas.busy or self.summaries.busy,appearance=read_mode(ROOT),paused=self.store.setting('paused','1')=='1',navigation_motion=self.store.setting('navigation_motion','system'),home_card_order=self.card_order(),module_order=self.module_order(),topics=self.snapshot_topics(),url=getattr(self,'origin',''),vault=self.vault.name)
@@ -524,9 +576,12 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
              '-c','model_instructions_file='+json.dumps(str(BUNDLE/'analysis-instructions.md'),ensure_ascii=False),
              '-c','web_search="disabled"','--sandbox','read-only','--skip-git-repo-check','--ephemeral','--json','--cd',run,'--image',*attachments,'--output-schema',run/'schema.json','--output-last-message',modelpath,'-']
         self.run_command(cmd,run/'codex-events.jsonl',timeout=1200,stdin=prompt)
-        r=read_json(modelpath);jsonschema.validate(r,schema)
-        if not is_images:r['transcript_clean']=corrected_transcript(raw,r.pop('transcript_corrections'))
-        self.validate_analysis(r,d)
+        try:
+            r=read_json(modelpath);jsonschema.validate(r,schema)
+            if not is_images:r['transcript_clean']=corrected_transcript(raw,r.pop('transcript_corrections'))
+            self.validate_analysis(r,d)
+        except (jsonschema.ValidationError,RuntimeError,KeyError,TypeError,ValueError) as e:
+            raise ItemAnalysisError(str(e)) from e
         # Reject any unexpected agent tool use before permitting publication.
         for line in (run/'codex-events.jsonl').read_text(encoding='utf-8').splitlines():
             try:e=json.loads(line)
@@ -646,9 +701,10 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
     def process_job(self,j):
         jid,vid=j['id'],j['video'];run=ROOT/'data/jobs'/jid;run.mkdir(parents=True,exist_ok=True)
         self.update_job(jid,status='running',stage='dedup',message='按精确视频ID查重',attempt=j['attempt']+1)
-        existing=scan_notes(self.vault).get(vid,{})
+        with self.note_lock:existing=scan_notes(self.vault,self.note_cache).get(vid,{})
         if existing.get('note') and not (run/'publish-journal.json').exists():
-            self.update_job(jid,status='skipped',stage='done',message='已有知识笔记，跳过重复处理',note=existing['note']);self.refresh_notes();return
+            self.record_note(vid,existing['note'],existing['raw'])
+            self.update_job(jid,status='skipped',stage='done',message='已有知识笔记，跳过重复处理',note=existing['note']);return
         item=self.store.rows('SELECT * FROM videos WHERE id=?',(vid,))[0]
         if item['duration']>3600:raise RuntimeError('超过1小时的视频需要分段方案，本版不截断处理')
         self.update_job(jid,stage='download',message='下载并校验每张原图' if item['kind']=='images' else '复用已有视频或下载新视频')
@@ -682,7 +738,9 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
         if self.cancelled(jid):self.update_job(jid,status='cancelled',message='草稿保留，入库前取消');return
         self.update_job(jid,stage='publish',message='校验后入库；不覆盖已有笔记')
         note=self.publish(vid,r,d,run)
-        self.update_job(jid,status='completed',stage='done',message='笔记、索引及处理日志已写入',note=note);self.refresh_notes()
+        journal=read_json(run/'publish-journal.json',{})
+        self.record_note(vid,note,journal.get('raw') if journal.get('note')==note else None)
+        self.update_job(jid,status='completed',stage='done',message='笔记、索引及处理日志已写入',note=note)
         self.cleanup_job_media(jid,vid,run,note)
     def worker(self):
         while not self.stop.is_set():
@@ -696,7 +754,21 @@ visual_summary按图号描述；evidence必须覆盖全部图号且只含visual�
             except subprocess.TimeoutExpired:self.update_job(j['id'],status='failed',message='阶段超时；中间结果保留，可重试')
             except Exception as e:
                 self.update_job(j['id'],status='failed',message=str(e)[:400])
-                if self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage'] in ('gpt','components'):self.store.set_setting('paused','1')
+                stage=self.store.rows('SELECT stage FROM jobs WHERE id=?',(j['id'],))[0]['stage']
+                if should_pause_after_failure(stage,e):self.store.set_setting('paused','1')
+            finally:
+                with contextlib.suppress(Exception):self.release_idle_browser()
+    def release_idle_browser(self):
+        if not self.bridge.lock.acquire(blocking=False):return False
+        try:
+            if self.sync_lock.locked() or self.auth_lock.locked() or self.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running') LIMIT 1"):return False
+            # Never close the user's visible login window or anybody else's browser.
+            if read_json(PRIVATE/'browser-state.json',{}).get('visible') is not False:return False
+            worker=self.bridge.owned_worker()
+            if not worker or not self.bridge.request('close',timeout=20).get('ok'):return False
+            worker.wait(timeout=10)
+            return True
+        finally:self.bridge.lock.release()
     def action(self,name,payload):
         if name=='summary_refresh':return self.summaries.start(payload)
         if name in ('enqueue','retry','place','resume','action_generate') and self.summaries.busy:

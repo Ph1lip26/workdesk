@@ -47,16 +47,28 @@ function paintSummaries(){
   summarySet('purchase-ai-summary','<div class="health-section-heading"><h2>知识库最新摘要</h2><span class="tile-evidence">AI提炼</span></div>'+display+(conflicts.length?'<h3>与手动记录的差异</h3>'+summaryRows(scope,conflicts):'')+'<p class="summary-status" role="status">'+esc(summaryStateText(scope))+'</p>'+((record?.result?.warnings||[]).length?'<details class="summary-warnings"><summary>来源与待核实提示</summary>'+record.result.warnings.map(w=>'<p>'+esc(w)+'</p>').join('')+'</details>':''));
  }
  const pr=$('purchase-refresh');if(pr){pr.disabled=summaryStarting||summaryState.running||!scope;pr.textContent=summaryState.running?'摘要更新中…':'更新知识库摘要';pr.setAttribute('aria-busy',String(summaryState.running))}
- requestAnimationFrame(paintSidebarSelection);
+ scheduleSidebarSelection();
+}
+let sidebarFrame=0,sidebarMarkerModule='',sidebarMarkerKey='';
+function scheduleSidebarSelection(){
+ if(!sidebarFrame&&!document.hidden)sidebarFrame=requestAnimationFrame(()=>{sidebarFrame=0;paintSidebarSelection()});
 }
 function paintSidebarSelection(){
- const nav=document.querySelector('.panel-nav'),active=[...(nav?.querySelectorAll('[aria-current=page]')||[])].find(e=>e.getClientRects().length);if(!nav)return;
+ const nav=document.querySelector('.panel-nav');
+ const active=nav?.querySelector(':scope > :not([hidden]) button[aria-current=page]');
+ if(!active||!active.getClientRects().length){const mark=$('panel-selection');if(mark)mark.hidden=true;return}
  let mark=$('panel-selection');if(!mark){mark=document.createElement('div');mark.id='panel-selection';mark.setAttribute('aria-hidden','true');nav.prepend(mark)}
- if(!active||$('modulepanel').inert){mark.hidden=true;return}
  const r=active.getBoundingClientRect(),n=nav.getBoundingClientRect();
- mark.hidden=r.bottom<n.top||r.top>n.bottom;
- const animated=navigationMotionEnabled()&&mark.dataset.placed==='true';mark.style.transition=animated?'transform 240ms var(--ease-out),width 240ms var(--ease-out),height 240ms var(--ease-out)':'none';
- mark.style.width=r.width+'px';mark.style.height=r.height+'px';mark.style.transform='translate('+(r.left-n.left+nav.scrollLeft)+'px,'+(r.top-n.top+nav.scrollTop)+'px)';mark.dataset.placed='true';
+ const module=document.body.dataset.module,show=r.bottom>=n.top&&r.top<=n.bottom;
+ const width=r.width+'px',height=r.height+'px',left=(r.left-n.left+nav.scrollLeft).toFixed(2),top=(r.top-n.top+nav.scrollTop).toFixed(2);
+ const transform='translate('+left+'px,'+top+'px)';
+ const key=[width,height,left,top].join(' ');
+ if(mark.hidden!==!show||sidebarMarkerModule!==module||sidebarMarkerKey!==key){
+  const slide=show&&!mark.hidden&&sidebarMarkerModule===module&&navigationMotionEnabled();
+  mark.style.transition=slide?'transform 180ms var(--ease-out)':'none';
+  mark.style.width=width;mark.style.height=height;mark.style.transform=transform;mark.hidden=!show;
+ }
+ sidebarMarkerModule=module;sidebarMarkerKey=key;
 }
 async function loadSummaries(){
  if(summaryLoading)return;summaryLoading=true;
@@ -94,8 +106,8 @@ document.addEventListener('click',e=>{
 $('homeview').addEventListener('click',e=>{if(e.target.closest('#home-refresh')){e.stopPropagation();requestSummary('home')}});
 $('purchase-refresh').onclick=()=>{if(purchaseSelectedId)requestSummary('purchase:'+purchaseSelectedId)};
 document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(summaryPoll);else loadSummaries()});
-document.addEventListener('click',()=>requestAnimationFrame(paintSidebarSelection));
-document.addEventListener('scroll',e=>{if($('modulepanel').contains(e.target))paintSidebarSelection()},true);
-window.addEventListener('resize',paintSidebarSelection);
+document.addEventListener('click',e=>{if(e.target.closest('#modulepanel,.module-rail,[data-home-queue],.module-entry,.home-collection-link'))scheduleSidebarSelection()});
+document.addEventListener('scroll',e=>{if($('modulepanel').contains(e.target))scheduleSidebarSelection()},true);
+window.addEventListener('resize',scheduleSidebarSelection);
 $('ideasopen').prepend($('enqueue').querySelector('svg').cloneNode(true));
 loadSummaries();

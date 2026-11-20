@@ -1,5 +1,5 @@
 /* Private manual weight log. Charts use actual dates and points, not predictions. */
-let healthState=null,healthBusy=false,weightEditing=null,weightSaving=false,weightDirty=false,weightDeleteArmed=false;
+let healthFingerprint='',healthState=null,healthBusy=false,weightEditing=null,weightSaving=false,weightDirty=false,weightDeleteArmed=false;
 let healthUnit='kg',healthRange='all',weightHoverChart=null,weightHoverIndex=-1;
 let healthSyncResult=null;
 let healthRefreshPromise=null;
@@ -52,7 +52,7 @@ async function refreshHealth({sync=false}={}){
  if(healthBusy)return sync?healthRefreshPromise.then(()=>refreshHealth({sync:true})):healthRefreshPromise;
  healthBusy=true;
  healthRefreshPromise=(async()=>{
-  try{if(sync)healthSyncResult=await api('health_sync',{});healthState=await api('health');renderHealth();renderHealthHome();return true}
+  try{if(sync)healthSyncResult=await api('health_sync',{});const data=await api('health'),key=JSON.stringify(data);healthState=data;if(key!==healthFingerprint||sync){healthFingerprint=key;if(currentModule==='health')renderHealth();renderHealthHome()}return true}
   catch(e){toast('体重记录读取失败：'+e.message);return false}finally{healthBusy=false}
  })();
  return healthRefreshPromise;
@@ -112,6 +112,7 @@ function closeWeightTooltip(){
  weightHoverChart=null;weightHoverIndex=-1;
 }
 function showWeightPoint(chart,index){
+ if(index<0||(chart===weightHoverChart&&index===weightHoverIndex))return;
  const points=[...chart.querySelectorAll('circle')];if(!points.length)return;
  index=Math.max(0,Math.min(points.length-1,index));if(weightHoverChart!==chart)closeWeightTooltip();
  weightHoverChart=chart;weightHoverIndex=index;
@@ -129,7 +130,8 @@ function showWeightPoint(chart,index){
 }
 function weightPointAt(chart,event){
  const svg=chart.querySelector('svg'),at=svg.createSVGPoint();at.x=event.clientX;at.y=event.clientY;
- const x=at.matrixTransform(svg.getScreenCTM().inverse()).x;
+ const matrix=svg.getScreenCTM();if(!matrix)return -1;
+ const x=at.matrixTransform(matrix.inverse()).x;
  const points=[...svg.querySelectorAll('circle')];let index=0,distance=Infinity;
  points.forEach((p,i)=>{const d=Math.abs(Number(p.getAttribute('cx'))-x);if(d<distance){distance=d;index=i}});return index;
 }

@@ -49,24 +49,37 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
    check('fixture emulates system reduced motion',await js("matchMedia('(prefers-reduced-motion:reduce)').matches"));
    const stored=JSON.parse(await request(desk.origin,'/api/state',await js('token'))).jobs;
-   await js("openQueuePage();state.jobs=['completed','skipped','running','failed','queued'].map((status,i)=>({id:'fixture-style-'+i,video:state.videos[0].id,status,message:'合成任务状态',updated:i}));jobsFingerprint='';render()");
+   await js("openQueuePage();state.jobs=['completed','skipped','running','failed','queued'].map((status,i)=>({id:'fixture-style-'+i,video:state.videos[0].id,status,message:'合成任务状态',updated:i}));render()");
    for(const mode of ['night','day']){
     await js(`paintAppearance('${mode}');updateNavigationMotion('on')`);await sleep(100);
     check(mode+': completed and skipped are omitted from current queue',await js("document.querySelectorAll('#jobs .badge.done').length===0"));
     check(mode+': unfinished jobs remain visible',await js("document.querySelectorAll('#jobs .job').length===3"));
     check(mode+': only running task has an indeterminate bar',await js("document.querySelectorAll('#jobs .job-progress').length===1&&!document.querySelector('.job-progress').hasAttribute('aria-valuenow')"));
+    check(mode+': navigation opt-in does not override reduced motion for processing',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationName==='none'"));
+    await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});await sleep(250);
     const start=await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform");await sleep(180);
-    check(mode+': local opt-in animates processing under reduced-motion OS',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform")!==start);
+    check(mode+': running indicator travels with ordinary system motion',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').transform")!==start);
     check(mode+': progress uses theme ink and rounded ends',await js("(()=>{const bar=document.querySelector('.job-progress'),s=getComputedStyle(bar),ink=getComputedStyle(bar,'::after');return parseFloat(s.borderRadius)>=99&&ink.backgroundImage.includes(getComputedStyle(document.body).color)})()"));
     await capture(path.join(fixture,'queue-style-'+mode+'.png'));
     await js("updateNavigationMotion('off')");
-    check(mode+': explicit motion-off keeps a static processing indicator',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationName==='none'"));
+    check(mode+': navigation-off does not disable the independent processing indicator',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationName==='progress'"));
+    await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
     await js("updateNavigationMotion('system')");
     check(mode+': system mode respects reduced motion',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationName==='none'"));
     await js("updateNavigationMotion('on');selectModule('home',{animate:false})");
-    check(mode+': progress pauses outside the collection module',await js("getComputedStyle(document.querySelector('.job-progress'),'::after').animationPlayState==='paused'"));
+    check(mode+': progress is not rendered outside the collection module',await js("!document.querySelector('.job-progress').getClientRects().length"));
     await js("openQueuePage()");
    }
+   await js("state.topics=['处理文件/测试'];state.jobs=[...state.jobs,{id:'fixture-review',video:state.videos[0].id,status:'needs_review',message:'等待分类'}];render();window.testTopic=document.querySelector('[data-topic=fixture-review]');testTopic.value=state.topics[0];testTopic.focus();state.jobs=state.jobs.map(j=>j.status==='running'?{...j,message:'合成进度已变化'}:j);render();void 0");
+   check('independent progress updates keep the classification control and selected value',await js("document.querySelector('[data-topic=fixture-review]')===testTopic&&document.activeElement===testTopic&&testTopic.value===state.topics[0]&&document.querySelector('#jobs').textContent.includes('合成进度已变化')"));
+   await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+   await js("window.runningBar=document.querySelector('.job-progress');state.jobs=state.jobs.map(j=>j.status==='running'?{...j,message:'Later phase'}:j);render()");
+   check('phase-only update never remounts the progress bar',await js("runningBar===document.querySelector('.job-progress')"));
+   const advance=await js("(()=>{const ws=document.querySelector('.workspace');ws.scrollTop=0;const before=[...$('jobs').children].map(r=>[r.dataset.job,r.getBoundingClientRect().top]);const quiet=quietMotionEnabled();state.jobs=state.jobs.map(j=>j.status==='running'?{...j,status:'completed'}:j);render();return {quiet,before,visible:innerHeight,moves:queueMoves.size,same:document.querySelector('[data-topic=fixture-review]')===testTopic,finished:!document.querySelector('.job-progress')}})()");
+   log.info('QUEUE_MOTION '+JSON.stringify(advance));
+   check('queue advances survivors without reincarnating their controls',advance.moves>0&&advance.same&&advance.finished);
+   await sleep(260);
+   check('queue animations release all effects when settled',await js("queueMoves.size===0"));
    check('queue visual checks never write real jobs',JSON.stringify(JSON.parse(await request(desk.origin,'/api/state',await js('token'))).jobs),JSON.stringify(stored));
    check('queue style has no renderer errors',errors.length,0);wc.debugger.detach();
    fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'queue-style',checks},null,2));await desk.quit();return;
@@ -147,24 +160,35 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'rail-order',checks},null,2));await desk.quit();return;
   }
   if(process.env.WORKDESK_SMOKE_SCOPE==='motion-lifecycle'){
-   desk.show();await sleep(200);await js("updateNavigationMotion('on')");
+   desk.show();await sleep(200);wc.debugger.attach('1.3');await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});await js("updateNavigationMotion('on')");
    const records=await js('JSON.stringify({jobs:state.jobs,home:homeOrder,rail:railOrder})');
    for(const mode of ['night','day']){
     await js(`paintAppearance('${mode}')`);
+    const btn=await js("(()=>{const r=$('toolsopen').getBoundingClientRect();return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()");
+    wc.sendInputEvent({type:'mouseMove',...btn});wc.sendInputEvent({type:'mouseDown',...btn,button:'left',clickCount:1});await sleep(130);
+    const press=await js("getComputedStyle($('toolsopen')).transform");
+    wc.sendInputEvent({type:'mouseMove',x:btn.x+65,y:btn.y});wc.sendInputEvent({type:'mouseUp',x:btn.x+65,y:btn.y,button:'left',clickCount:1});
+    const first=await js("(()=>{selectModule('health');const el=$('healthmodule').querySelector('svg'),a=el.getAnimations()[0];a?.pause();if(a)a.currentTime=0;const matrix=new DOMMatrixReadOnly(getComputedStyle(el).transform==='none'?undefined:getComputedStyle(el).transform);const view=$('healthview').getAnimations();a?.play();return {glyph:matrix.isIdentity,pageEffects:view.length}})()");
+    log.info('FIRST_FRAME '+JSON.stringify({mode,press,...first}));
+    check(mode+': native press holds still before click',press==='none');
+    check(mode+': primary icon begins at its actual resting pose',first.glyph);
+    check(mode+': reading surface does not jump before navigation starts',first.pageEffects===0);
     const noLayoutReads=await js("(()=>{const nodes=[...$('home-cards').children,...RAIL_IDS.map(railButton)],original=nodes.map(n=>n.getBoundingClientRect);let reads=0;try{nodes.forEach((n,i)=>n.getBoundingClientRect=()=>{reads++;return original[i].call(n)});applyHomeOrder(homeOrder);applyRailOrder(railOrder);return reads===0}finally{nodes.forEach((n,i)=>n.getBoundingClientRect=original[i])}})()");
     check(mode+': nonanimated layout sync does not measure every tile',noLayoutReads);
     for(const name of ['douyin','purchases','health','home','health','douyin','home']){
      await js(`selectModule('${name}')`);await sleep(35);
-     check(mode+'/'+name+': only active view retains an entrance animation',await js("moduleViewAnimations.size<=1&&[...moduleViewAnimations.keys()].every(el=>el.id===moduleRegistry[currentModule].view&&!el.hidden)"));
+     check(mode+'/'+name+': no page-wide entrance competes with navigation',await js("$(moduleRegistry[currentModule].view).getAnimations().length===0"));
     }
     await sleep(350);
-    check(mode+': page entrance layers are released',await js('moduleViewAnimations.size===0'));
+    check(mode+': page entrance layers are released',await js("Object.values(moduleRegistry).every(m=>!$(m.view).getAnimations().length)"));
     const summary=await js("(()=>{renderHomepageSummary();const el=$('home-purchases-summary'),node=el.firstElementChild;renderHomepageSummary();return node===el.firstElementChild})()");
     check(mode+': unchanged purchase summary keeps its DOM',summary);
     await js("$('tools').showModal()");await sleep(50);
     const motion=await js("(()=>{const s=getComputedStyle($('tools'));return {name:s.animationName,duration:parseFloat(s.animationDuration),modal:$('tools').matches(':modal'),focus:$('tools').contains(document.activeElement)}})()");
-    check(mode+': dialog uses gentle shared entry and retains modal focus',motion.modal&&motion.focus&&(motion.name==='sheet-enter'?motion.duration>=.29:motion.name==='none'));
-    await js("$('tools').close();selectModule('home',{animate:false});window.__motionHomeBefore=[...homeOrder];applyHomeOrder([...homeOrder].reverse(),true)");await sleep(60);
+    check(mode+': dialog uses gentle shared entry and retains modal focus',motion.modal&&motion.focus&&(motion.name==='sheet-enter'?motion.duration>=.12&&motion.duration<=.18:motion.name==='none'));
+    await js("$('tools').close()");
+    check(mode+': closing releases the modal and pointer immediately',await js("!$('tools').matches(':modal')&&getComputedStyle($('tools')).pointerEvents==='none'"));
+    await js("selectModule('home',{animate:false});window.__motionHomeBefore=[...homeOrder];applyHomeOrder([...homeOrder].reverse(),true)");await sleep(60);
     const continuity=await js("(()=>{const cards=[...$('home-cards').children],before=cards.map(c=>c.getBoundingClientRect());applyHomeOrder(window.__motionHomeBefore,true);const after=cards.map(c=>c.getBoundingClientRect());return Math.max(...before.map((r,i)=>Math.hypot(r.left-after[i].left,r.top-after[i].top)))})()");
     check(mode+': rapid home reorder resumes from visible positions',continuity<2);await sleep(350);
     check(mode+': home reorder animations release all layers',await js("!homeFlipAnimations.size&&[...$('home-cards').children].every(c=>!c.style.willChange)"));
@@ -176,7 +200,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     const releaseContinuity=await js("(()=>{const button=railDrag.button,others=RAIL_IDS.map(railButton).filter(b=>b!==button),before=others.map(b=>b.getBoundingClientRect().top);finishRailDrag(true);return Math.max(...others.map((b,i)=>Math.abs(b.getBoundingClientRect().top-before[i])))})()");
     check(mode+': releasing or cancelling rail drag does not snap moving neighbors',releaseContinuity<2);await sleep(300);
     await js("selectModule('health');updateNavigationMotion('off')");
-    check(mode+': disabling app motion cancels the current page entrance',await js("!moduleViewAnimations.size&&!moduleGlyphAnimations.size&&!railGlyphAnimations.size"));
+    check(mode+': disabling app motion cancels the current page entrance',await js("!moduleGlyphAnimations.size&&!railGlyphAnimations.size"));
     await js("selectModule('home');updateNavigationMotion('on')");
    }
    check('motion checks preserve jobs and both saved layouts',await js('JSON.stringify({jobs:state.jobs,home:homeOrder,rail:railOrder})'),records);
@@ -184,16 +208,18 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    fs.writeFileSync(path.join(fixture,'native-smoke.json'),JSON.stringify({ok:true,scope:'motion-lifecycle',checks},null,2));await desk.quit();return;
   }
   if(process.env.WORKDESK_SMOKE_SCOPE==='home-sort'){
-   desk.show();await sleep(200);await js("updateNavigationMotion('on')");
+   desk.show();await sleep(200);wc.debugger.attach('1.3');await wc.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});await js("updateNavigationMotion('on')");
    const jobs=await js('JSON.stringify(state.jobs)');
    for(const mode of ['night','day'])for(const [width,height] of [[1180,760],[800,560]]){
     w.setContentSize(width,height);await sleep(220);await js(`paintAppearance('${mode}');applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()`);await js('homeSaveChain');
+    const homeHeight=await js("document.querySelector('.workspace').scrollHeight");
     const points=await js("(()=>{const a=document.querySelector('[data-home-handle=next]').getBoundingClientRect(),b=document.querySelector('[data-home-card=douyin]').getBoundingClientRect();return {from:{x:Math.round(a.left+a.width/2),y:Math.round(a.top+a.height/2)},to:{x:Math.round(b.left+b.width/2),y:Math.round(b.top+b.height/2)}}})()");
     wc.sendInputEvent({type:'mouseMove',...points.from});wc.sendInputEvent({type:'mouseDown',...points.from,button:'left',clickCount:1});
     wc.sendInputEvent({type:'mouseMove',x:points.from.x-15,y:points.from.y+20,modifiers:['leftButtonDown']});await sleep(60);
     wc.sendInputEvent({type:'mouseMove',...points.to,modifiers:['leftButtonDown']});await sleep(70);
     check(`${mode} ${width}: fixed target slot receives dragged card`,await js("homeDrag?.active&&homeOrder[2]==='next'&&document.querySelector('[data-home-card=next]').classList.contains('home-card-placeholder')"));
     const trace=await js("new Promise(resolve=>{const orders=new Set(),g=document.getElementById('home-cards');let mutations=0,frames=0;const observer=new MutationObserver(list=>{mutations+=list.length});observer.observe(g,{childList:true});const start=performance.now();function tick(){orders.add(JSON.stringify(homeOrder));frames++;if(performance.now()-start<550)requestAnimationFrame(tick);else{observer.disconnect();resolve({orders:orders.size,mutations,frames})}}requestAnimationFrame(tick)})");
+    log.info("HOME_DRAG "+JSON.stringify({mode,width,...trace}));
     check(`${mode} ${width}: stationary pointer never oscillates or reorders DOM`,trace.orders===1&&trace.mutations===0&&trace.frames>5);
     check(`${mode} ${width}: stationary drag has no pending frame loop`,await js('homeDrag?.frame===0'));
     check(`${mode} ${width}: no duplicate exposed card while dragging`,await js("getComputedStyle(homeDrag.card).visibility==='hidden'&&getComputedStyle(homeDrag.ghost).visibility==='visible'"));
@@ -201,7 +227,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     check(`${mode} ${width}: landing keeps one preview without opacity fade`,await js("homeLandingGhosts.size===1&&[...homeLandingGhosts][0].getAnimations().every(a=>a.effect.getKeyframes().every(k=>!('opacity' in k)))"));
     await sleep(430);await js('homeSaveChain');
     check(`${mode} ${width}: preview and all temporary layers clean up`,await js("!homeDrag&&!homeLandingGhosts.size&&!homeFlipAnimations.size&&!document.querySelector('.home-drag-preview,.home-card-placeholder')&&[...document.querySelectorAll('#home-cards>.home-tile')].every(c=>!c.style.willChange&&getComputedStyle(c).visibility==='visible')"));
-    check(`${mode} ${width}: final order persists and page remains one viewport`,await js("JSON.stringify(state.home_card_order)===JSON.stringify(homeOrder)&&document.querySelector('.workspace').scrollHeight<=document.querySelector('.workspace').clientHeight+1"));
+    check(`${mode} ${width}: final order persists and preserves pre-drag scroll geometry`,await js("JSON.stringify(state.home_card_order)===JSON.stringify(homeOrder)")&&Math.abs(await js("document.querySelector('.workspace').scrollHeight")-homeHeight)<=1);
    }
    await js("applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()");await js('homeSaveChain');
    await js("const h=document.querySelector('[data-home-handle=next]');h.focus();h.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));h.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));h.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");await sleep(380);
@@ -236,7 +262,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    check('preview can open over the queue page',await js("document.getElementById('preview').open&&douyinPage==='queue'"));
    await js("document.getElementById('closepreview').click()");
    check('closing preview returns to the same queue page',await js("!document.getElementById('preview').open&&!document.getElementById('queuepanel').hidden"));
-   await js("api=window.__queueOriginal;state.jobs=[];jobsFingerprint='';render();void 0");
+   await js("api=window.__queueOriginal;state.jobs=[];render();void 0");
    check('queue navigation never changes stored jobs or card order',await js('JSON.stringify(state.jobs)')===before&&await js('JSON.stringify(homeOrder)')===order);
    check('readability scope has no renderer errors',errors.length,0);
    await capture(path.join(fixture,'queue-page.png'));
@@ -413,7 +439,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    log.info(`Health native smoke: ${checks.length} checks passed`);await desk.quit();return;
   }
   if(process.env.WORKDESK_SMOKE_SCOPE==='performance'){
-    await js("refresh().then(()=>{window.pollProbe={state:0,home:0};window.probeFetch=window.fetch;window.fetch=(url,...args)=>{if(url==='/api/state')pollProbe.state++;if(url==='/api/home')pollProbe.home++;return probeFetch(url,...args)}})");
+    await js("refresh().then(()=>{window.pollProbe={state:0,home:0};window.probeFetch=window.fetch;window.fetch=(url,...args)=>{if(String(url).split('?')[0]==='/api/state')pollProbe.state++;if(url==='/api/home')pollProbe.home++;return probeFetch(url,...args)}})");
     // Restore production visibility behavior; unthrottled fixtures stay "visible" when hidden.
     wc.setBackgroundThrottling(true);w.hide();await sleep(200);
     check('hidden fixture uses production visibility state',await js('document.hidden'));
@@ -525,13 +551,13 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    for(let n=0;n<30;n++){if(await js("appearanceMode==='day'&&!appearanceSaving"))break;await sleep(100)}
    check('settings selector switches the whole document to day',await js("appearanceMode==='day'&&document.getElementById('appearance-mode').value==='day'"));
    check('native frame background matches the day document',w.getBackgroundColor().toLowerCase(),'#f5f5f5');
-   check('day popup has readable dark ink and light surface',await js("getComputedStyle(document.getElementById('tools')).backgroundColor.startsWith('rgba(245, 245, 245,')&&getComputedStyle(document.getElementById('tools')).color==='rgb(35, 35, 35)'"));
+   check('day popup has readable dark ink and light surface',await js("getComputedStyle(document.getElementById('tools')).backgroundColor.startsWith('rgba(248, 248, 248,')&&getComputedStyle(document.getElementById('tools')).color==='rgb(35, 35, 35)'"));
    await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-tools.png'),img.toPNG()));
    await js("document.getElementById('tools').close()");
    check('day home cards share one aluminium material',await js("(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>c.backgroundColor==='rgb(227, 227, 227)'&&!c.backgroundImage.includes('data:image'))&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
    for(const [width,height] of [[1440,920],[800,560]]){
     w.setContentSize(width,height);await sleep(180);
-    check(`${width}: day home still fits one viewport`,await js("(()=>{const ws=document.querySelector('.workspace');return ws.scrollHeight<=ws.clientHeight+1&&document.documentElement.scrollWidth<=innerWidth})()"));
+    check(`${width}: day home uses its existing responsive layout without horizontal overflow`,await js("(()=>{const ws=document.querySelector('.workspace');return (matchMedia('(max-width:950px) and (max-height:650px)').matches?ws.scrollHeight>ws.clientHeight:ws.scrollHeight<=ws.clientHeight+1)&&document.documentElement.scrollWidth<=innerWidth})()"));
    }
    w.setContentSize(1440,920);await sleep(120);
    await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-home.png'),img.toPNG()));
@@ -551,7 +577,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    const selected=await js('JSON.stringify([...selection])');
    await sleep(1300);w.minimize();desk.show();await sleep(500);
    check('restore retains library page and selected videos',await js("pageNumber===2&&JSON.stringify([...selection])==="+JSON.stringify(selected)));
-   check('day navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.rail-button.active')).backgroundImage.includes('data:image/png')&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
+   check('day navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('#modules>.rail-button.active'),'::after').backgroundImage.includes('gradient')&&getComputedStyle(document.querySelector('#modules>.rail-button.active'),'::after').opacity==='1'&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
    check('day library and sidebar use dark ink',await js("getComputedStyle(document.querySelector('.card-title')).color==='rgb(35, 35, 35)'&&getComputedStyle(document.querySelector('.module-panel')).backgroundColor==='rgb(237, 237, 237)'"));
    await wc.capturePage().then(img=>fs.writeFileSync(path.join(fixture,'day-library.png'),img.toPNG()));
    await js("document.getElementById('queueopen').click()");
@@ -575,7 +601,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     check('explicit night ignores subsequent OS theme changes',await js("appearanceMode==='night'&&document.documentElement.dataset.appearance==='night'")&&w.getBackgroundColor().toLowerCase()==='#131415');
    }finally{nativeTheme.themeSource=originalTheme}
    await js("document.getElementById('homemodule').click()");await sleep(200);
-   check('night navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.rail-button.active')).backgroundImage.includes('data:image/png')&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
+   check('night navigation texture is confined to selected rail tile',await js("getComputedStyle(document.querySelector('.module-rail')).backgroundImage==='none'&&getComputedStyle(document.querySelector('.module-panel')).backgroundImage==='none'&&getComputedStyle(document.querySelector('#modules>.rail-button.active'),'::after').backgroundImage.includes('gradient')&&getComputedStyle(document.querySelector('#modules>.rail-button.active'),'::after').opacity==='1'&&[...document.querySelectorAll('.rail-button:not(.active)')].every(e=>getComputedStyle(e).backgroundImage==='none')"));
    check('night metal finish and opacity are preserved',await js("getComputedStyle(document.querySelector('.home-tile')).backgroundColor==='rgb(48, 48, 48)'&&!getComputedStyle(document.querySelector('.home-tile')).backgroundImage.includes('data:image')"));
    check('opening does not reset tasks or card order',await js('JSON.stringify(state.jobs)')===jobsBefore&&await js('JSON.stringify(homeOrder)')===orderBefore);
    const setupTheme=require('electron').nativeTheme,savedTheme=setupTheme.themeSource;
@@ -722,7 +748,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("api('navigation_motion',{mode:'system'}).then(()=>refresh())");await sleep(100);
   check('system motion mode honors native reduced motion',await js("!matchMedia('(prefers-reduced-motion:reduce)').matches||getComputedStyle(document.getElementById('modulepanel')).transitionDuration==='0s'"));
   await js("api('navigation_motion',{mode:'on'}).then(()=>refresh())");await sleep(100);
-  check('explicit app opt-in enables navigation only',await js("document.body.dataset.navigationMotion==='on'&&getComputedStyle(document.getElementById('modulepanel')).transitionDuration.includes('0.34s')"));
+  check('explicit app opt-in enables navigation only',await js("document.body.dataset.navigationMotion==='on'&&Math.round(parseFloat(getComputedStyle(document.getElementById('modulepanel')).transitionDuration)*1000)===navigationDuration()"));
   check('scrollbar uses rounded Chromium styling',await js("getComputedStyle(document.querySelector('.workspace')).scrollbarColor==='auto'&&getComputedStyle(document.querySelector('.workspace'),'::-webkit-scrollbar').width==='10px'"));
   const thumbStyle=await js("(()=>{const s=getComputedStyle(document.querySelector('.workspace'),'::-webkit-scrollbar-thumb');return {radius:s.borderRadius,border:s.borderLeftWidth,clip:s.backgroundClip}})()");
   // Chromium rounds physical border pixels at fractional Windows display scales.
@@ -761,30 +787,27 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('brand rail extends to top edge',await js("document.querySelector('.module-rail').getBoundingClientRect().top===0&&document.querySelector('.workspace-mark').getBoundingClientRect().top<40"));
   check('brand does not sit behind title drag strip',await js("document.querySelector('.window-chrome').getBoundingClientRect().left>=document.querySelector('.module-rail').getBoundingClientRect().right"));
   check('redundant panel texts removed',await js("!document.querySelector('.panel-heading p')&&!document.querySelector('.panel-footer')&&!document.body.innerText.includes('本机工作台')"));
-  // Test inherited visibility and painted glyphs, not only container opacity.
-  // A late visibility switch can hide an entire otherwise-correct fade.
+  // Sample actual painted type while the shared panel is being clipped.
   for(const width of [1440,960]){
    w.setContentSize(width,720);await navigationSettled();
    if(await js("document.getElementById('douyinmodule').getAttribute('aria-expanded')==='true'")){await js('toggleNavigation()');await navigationSettled()}
-   // Sample the middle of the 360ms text fade. A capture near its leading edge
-   // may still be the compositor's preceding dark frame; it is not a no-text bug.
+   // Freeze the panel before capturing its already-readable text.
    await js('toggleNavigation()');await sleep(180);
    // Freeze this sampled pose so async screenshot capture cannot race a moving
    // text rectangle. Resume only after inspecting its actual painted pixels.
    await js("document.getAnimations().filter(a=>a.effect?.target?.closest?.('#modulepanel')).forEach(a=>{const t=a.effect.getTiming();a.pause();a.currentTime=t.delay+Number(t.duration)*.5})");
    await js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");
-   const text=await js("(()=>{const el=document.querySelector('.panel-link>span'),r=el.getBoundingClientRect(),rgb=e=>getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0,3).map(Number);return {visibility:getComputedStyle(el).visibility,titleVisibility:getComputedStyle(document.querySelector('.panel-heading h2')).visibility,alpha:+getComputedStyle(document.querySelector('.panel-nav')).opacity,panel:rgb(document.getElementById('modulepanel')),row:rgb(el.closest('.panel-link')),rect:r.toJSON(),dpr:devicePixelRatio}})()");
-   check(`${width}: native text is visible during the fade`,text.visibility==='visible'&&text.titleVisibility==='visible');
-   check(`${width}: sampled native text has an intermediate fade`,text.alpha>.02&&text.alpha<.9);
+   const text=await js("(()=>{const el=document.querySelector('.panel-link>span'),r=el.getBoundingClientRect(),rgb=e=>getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0,3).map(Number);return {visibility:getComputedStyle(el).visibility,titleVisibility:getComputedStyle(document.querySelector('.panel-heading h2')).visibility,alpha:+getComputedStyle(document.querySelector('.panel-nav')).opacity,offset:document.getElementById('modulepanel').getBoundingClientRect().left-document.getElementById('panelhost').getBoundingClientRect().left,clip:document.getElementById('panelhost').getBoundingClientRect().left,panel:rgb(document.getElementById('modulepanel')),row:rgb(el.closest('.panel-link')),rect:r.toJSON(),dpr:devicePixelRatio}})()");
+   check(`${width}: native text is visible during panel reveal`,text.visibility==='visible'&&text.titleVisibility==='visible');
+   check(`${width}: the panel reveals live type without an independent fade`,text.alpha===1&&text.offset< -1&&text.offset> -100);
    const image=await wc.capturePage(),png=image.toPNG(),pixels=image.toBitmap();
    const iw=png.readUInt32BE(16),ih=png.readUInt32BE(20);
    assert.equal(pixels.length,iw*ih*4,'Native bitmap pixel dimensions');
-   // Compare to the real blended row background, not a palette-specific RGB
-   // threshold. Otherwise a quieter dark surface incorrectly reports no glyphs.
+   // Count real ink against the sampled row backdrop, only inside the clipping host.
    const base=text.panel.map((v,i)=>v*(1-text.alpha)+text.row[i]*text.alpha);
    let ink=0;
    for(let y=Math.max(0,Math.floor(text.rect.top*text.dpr));y<Math.min(ih,Math.ceil(text.rect.bottom*text.dpr));y++){
-    for(let x=Math.max(0,Math.floor(text.rect.left*text.dpr));x<Math.min(iw,Math.ceil(text.rect.right*text.dpr));x++){
+    for(let x=Math.max(0,Math.ceil(Math.max(text.rect.left,text.clip)*text.dpr));x<Math.min(iw,Math.ceil(text.rect.right*text.dpr));x++){
      const i=(y*iw+x)*4;if(pixels[i+2]-base[0]>5&&pixels[i+1]-base[1]>5&&pixels[i]-base[2]>5)ink++;
     }
    }
