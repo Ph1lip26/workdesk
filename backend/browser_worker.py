@@ -106,7 +106,7 @@ def main():
             nonlocal ctx,page,context_closed
             if ctx is None or context_closed:
                 state(status='starting',message='后台连接初始化' if not visible else '扫码窗口初始化')
-                ctx=p.chromium.launch_persistent_context(str(private/'profile'),headless=not visible,locale='zh-CN',viewport={'width':1250,'height':850},accept_downloads=False)
+                ctx=p.chromium.launch_persistent_context(str(private/'profile'),channel='chromium',headless=not visible,locale='zh-CN',viewport={'width':1250,'height':850},accept_downloads=False)
                 page=None
                 context_closed=False;ctx.on('close',on_closed)
             if page is None or page.is_closed():

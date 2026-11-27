@@ -4,7 +4,7 @@ let refreshPromise=null,refreshAgain=false,stateFailures=0;
 let indexedJobs,jobByVideo,indexedVideos,videoByID;
 let state=null,view='favorites',folder='',selection=new Set(),busy=false,fingerprint='',cardFingerprint='',navFingerprint='',toastTimer,statePollTimer;
 let douyinPage='library',libraryScroll=0,queueScroll=0;
-let syncPending=false,syncObserved=false,syncLocalStarted=0,syncPollBusy=false,syncStatus=null,syncTransportError='';
+let syncPending=false,syncObserved=false,syncLocalStarted=0,syncPollBusy=false,syncStatus=null,syncTransportError='',syncTimer=null;
 const PAGE_SIZE=30;
 function statePollDelay(snapshot,hidden,failures=0){
  if(hidden)return 0;
@@ -16,7 +16,8 @@ function scheduleStatePoll(){
  const delay=statePollDelay(state,document.hidden,stateFailures);
  if(delay)statePollTimer=setTimeout(refresh,delay);
 }
-let pageNumber=1;
+let pageNumber=1,lastWindow='',searchTimer=null;
+const catalogPage=()=>state?.catalog_page;
 let workDetailID='',workDetailKey='',workDetailScroll=0,workDetailFocus=null;
 function renderWorkDetail(){
  const host=$('work-detail');if(!host||!workDetailID||!state)return;
@@ -29,7 +30,7 @@ function renderWorkDetail(){
  if(active)$(active)?.focus({preventScroll:true});
 }
 function openWorkDetail(id,trigger){
- if(!state?.videos.some(v=>v.id===id))return;
+ if(!state||!findVideo(id))return;
  stopNavigationAnimation();
  const ws=document.querySelector('.workspace');
  if(!workDetailID){workDetailScroll=ws.scrollTop;workDetailFocus=trigger||document.activeElement}
@@ -87,10 +88,10 @@ function currentJob(id){
  return jobByVideo.get(id);
 }
 function findVideo(id){
- if(indexedVideos!==state.videos){indexedVideos=state.videos;videoByID=new Map(indexedVideos.map(v=>[v.id,v]))}
+ if(indexedVideos!==state.videos){indexedVideos=state.videos;videoByID=new Map([...indexedVideos,...(catalogPage()?.extra_videos||[])].map(v=>[v.id,v]))}
  return videoByID.get(id);
 }
-function videoState(v){if(saved(v))return {key:'done',label:'已入库'};const j=currentJob(v.id);if(j&&['queued','running','needs_review'].includes(j.status))return {key:'pending',label:labels[j.status]};if(j?.status==='failed')return {key:'failed',label:'处理失败'};return {key:'new',label:'未入库'}}
+function videoState(v){if(v.note)return {key:'done',label:'已成笔记'};if(v.raw){const j=currentJob(v.id);return {key:'raw',label:'仅原始'+(j?.status==='failed'?' · 处理失败':j?.status==='needs_review'?' · 待归类':['queued','running'].includes(j?.status)?' · 处理中':' · 可补笔记')}};const j=currentJob(v.id);if(j&&['queued','running','needs_review'].includes(j.status))return {key:'pending',label:labels[j.status]};if(j?.status==='failed')return {key:'failed',label:'处理失败'};return {key:'new',label:'未入库'}}
 function eligible(v){const j=currentJob(v.id);return !v.note&&(!j||!['queued','running','needs_review'].includes(j.status))}
 const selectable=v=>Boolean(v.note)||eligible(v);
 function syncNotice(sync,account,count){
@@ -99,11 +100,13 @@ function syncNotice(sync,account,count){
  return {needsLogin,message:needsLogin?'抖音尚未登录，已保留 '+count+' 条收藏。':loginFailure?'登录已确认，已保留 '+count+' 条收藏。请刷新收藏更新列表。':'刷新未成功，已保留 '+count+' 条收藏。可重试或检查登录。'};
 }
 const workURL=v=>'https://www.douyin.com/'+(v.kind==='images'?'note/':'video/')+v.id;
-function scopeItems(){const q=$('search').value.trim().toLowerCase(),members=folder?new Set(state.membership.filter(m=>m.folder===folder).map(m=>m.video)):null;return state.videos.filter(v=>{if(members&&!members.has(v.id))return false;if(!members&&view==='favorites'&&!v.favorite)return false;return !q||(v.title+' '+v.author).toLowerCase().includes(q)})}
-function compareIDs(a,b){return a.id.length===b.id.length?b.id.localeCompare(a.id):b.id.length-a.id.length}
-function visible(){const filter=$('status').value;const items=scopeItems().filter(v=>filter==='all'||(filter==='done'?saved(v):!saved(v)));const positions=folder?new Map(state.membership.filter(m=>m.folder===folder).map(m=>[m.video,m.position])):null;return items.sort((a,b)=>{if($('sort').value==='published')return (b.published_at||0)-(a.published_at||0)||compareIDs(a,b);if(view==='local'&&!folder)return compareIDs(a,b);const pa=positions?positions.get(a.id):a.favorite_position,pb=positions?positions.get(b.id):b.favorite_position;return (pa??Number.MAX_SAFE_INTEGER)-(pb??Number.MAX_SAFE_INTEGER)||compareIDs(a,b)})}
-function pageSlice(items){const pages=Math.max(1,Math.ceil(items.length/PAGE_SIZE));pageNumber=Math.min(Math.max(1,pageNumber),pages);return items.slice((pageNumber-1)*PAGE_SIZE,pageNumber*PAGE_SIZE)}
-function changePage(number){pageNumber=number;render();$('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true})}
+async function changePage(number){
+ pageNumber=number;await refresh();
+ $('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
+}
+function windowQuery(){
+ return new URLSearchParams({paged:'1',view,folder,q:$('search').value.trim().slice(0,256),filter:$('status').value,sort:$('sort').value,page:String(pageNumber),include:[...new Set([...selection,workDetailID].filter(Boolean))].join(',')});
+}
 async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'X-Workbench-Token':token,...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});const out=await r.json();if(r.status===403){throw Error('本机服务已更新；请先保存当前编辑，再重新加载界面')}if(!r.ok)throw Error(out.error||'请求未成功');return out}
 function toast(s){clearTimeout(toastTimer);const host=[...document.querySelectorAll('dialog[open]')].at(-1)||document.body;if($('toast').parentElement!==host)host.append($('toast'));$('toast').textContent=s;$('toast').style.display='block';toastTimer=setTimeout(()=>$('toast').style.display='none',4500)}
 async function action(name,data={}){try{const out=await api(name,data);fingerprint='';await refresh();return out}catch(e){toast(e.message);return null}}
@@ -116,7 +119,14 @@ function syncFeedback(data,now=Date.now()){
  const stamp=new Date(r.updated*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),duration=Number.isFinite(r.duration)?` · 用时 ${Math.round(r.duration)} 秒`:'';
  return {running:false,title:r.ok?(r.complete&&r.folders_complete?`刷新完成 · ${r.count||0} 条收藏`:'本次读取已结束 · 完整性待核验'):'刷新未成功 · 原有收藏已保留',detail:`上次刷新 ${stamp}${duration}${r.ok&&!r.folders_complete?' · 收藏夹仍需核验':''}`};
 }
+function scheduleSyncPoll(){
+ const needed=!document.hidden&&(syncPending||syncObserved||(syncStatus?.syncing??state?.syncing));
+ if(!needed){clearTimeout(syncTimer);syncTimer=null;return}
+ if(syncTimer!==null)return;
+ syncTimer=setTimeout(async()=>{syncTimer=null;paintSyncStatus();await pollSyncStatus();scheduleSyncPoll()},syncTransportError?3500:900);
+}
 function paintSyncStatus(){
+ scheduleSyncPoll();
  const data=syncStatus||{syncing:state?.syncing,progress:state?.sync_progress,sync:state?.sync},f=syncFeedback(data);
  $('sync-status').hidden=!f;if(f){$('sync-stage').textContent=f.title;$('sync-elapsed').textContent=f.detail;$('sync-track').hidden=!f.running||syncPending;$('sync-status').classList.toggle('running',f.running)}
  const running=Boolean(f?.running);$('sync').disabled=running;$('sync').querySelector('span').textContent=running?'刷新中…':'刷新收藏';$('sync').setAttribute('aria-busy',String(running));document.body.classList.toggle('is-syncing',running);
@@ -143,11 +153,11 @@ async function refreshWithFeedback(id,task){
 }
 function renderNavigation(){
  const choice=douyinPage==='queue'?'queue':folder?'folder:'+folder:view;
- $('favoritecount').textContent=state.videos.filter(v=>v.favorite).length;
- $('localcount').textContent=state.videos.length;
+ $('favoritecount').textContent=(state.totals?.favorites??state.videos.filter(v=>v.favorite).length);
+ $('localcount').textContent=(state.totals?.total??state.videos.length);
  const folderKey=JSON.stringify([state.folders,state.membership]);
  if(folderKey!==navFingerprint){
-  $('foldernav').innerHTML=state.folders.map(f=>'<button class="panel-link" data-source="folder:'+esc(f.id)+'" title="'+esc(f.name)+'"><svg data-lucide="folder" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg><span>'+esc(f.name)+'</span><span class="nav-count">'+state.membership.filter(m=>m.folder===f.id).length+'</span></button>').join('');
+  $('foldernav').innerHTML=state.folders.map(f=>'<button class="panel-link" data-source="folder:'+esc(f.id)+'" title="'+esc(f.name)+'"><svg data-lucide="folder" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg><span>'+esc(f.name)+'</span><span class="nav-count">'+(f.count||0)+'</span></button>').join('');
   $('folders-empty').hidden=Boolean(state.folders.length);navFingerprint=folderKey;
  }
  for(const button of $('modulepanel').querySelectorAll('[data-source]')){
@@ -179,7 +189,7 @@ function selectSource(value){
  if(typeof selectModule==='function'&&currentModule!=='douyin')selectModule('douyin',{animate:false});
  folder=value.startsWith('folder:')?value.slice(7):'';view=folder?'favorites':value;if(!keepPage)pageNumber=1;
  // Search and status remain explicit user filters when changing the source.
- render();closeCompactNavigation();
+ refresh();closeCompactNavigation();
  if(!keepPage)$('library').scrollIntoView({block:'start'});$('scope').focus({preventScroll:true});
 }
 function render(){
@@ -187,18 +197,20 @@ function render(){
  if(typeof syncRailOrder==='function')syncRailOrder();
  updateNavigationMotion(state.navigation_motion);
  renderNavigation();
- const allItems=visible(),items=pageSlice(allItems),scoped=scopeItems(),sync=state.sync||{},account=state.account||{},count=state.videos.filter(v=>v.favorite).length;
- const pages=Math.max(1,Math.ceil(allItems.length/PAGE_SIZE));
+ const items=catalogPage()?.videos||[],total=catalogPage()?.total||0,sync=state.sync||{},account=state.account||{},count=state.totals?.favorites||0;
+ const pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
  $('pagination').hidden=pages<2;
  $('pageinfo').textContent=pageNumber+' / '+pages;
  $('prevpage').disabled=pageNumber===1;$('nextpage').disabled=pageNumber===pages;
- $('pagenumbers').innerHTML=Array.from({length:pages},(_,i)=>i+1).filter(n=>n===1||n===pages||Math.abs(n-pageNumber)<=1).map((n,i,shown)=>(i&&n-shown[i-1]>1?'<span aria-hidden="true">…</span>':'')+'<button data-page="'+n+'" aria-label="第 '+n+' 页" '+(n===pageNumber?'aria-current="page"':'')+'>'+n+'</button>').join('');
+ $('pagenumbers').innerHTML=[...new Set([1,pageNumber-1,pageNumber,pageNumber+1,pages])].filter(n=>n>=1&&n<=pages).sort((a,b)=>a-b).map((n,i,shown)=>(i&&n-shown[i-1]>1?'<span aria-hidden="true">…</span>':'')+'<button data-page="'+n+'" aria-label="第 '+n+' 页" '+(n===pageNumber?'aria-current="page"':'')+'>'+n+'</button>').join('');
  const source=$('source'),choice=folder?'folder:'+folder:view;
- source.innerHTML='<option value="favorites">全部收藏 ('+count+')</option><option value="local">本地素材 ('+state.videos.length+')</option>'+state.folders.map(f=>'<option value="folder:'+esc(f.id)+'">'+esc(f.name)+' ('+state.membership.filter(m=>m.folder===f.id).length+')</option>').join('');
+ source.innerHTML='<option value="favorites">全部收藏 ('+count+')</option><option value="local">本地素材 ('+(state.totals?.total??state.videos.length)+')</option>'+state.folders.map(f=>'<option value="folder:'+esc(f.id)+'">'+esc(f.name)+' ('+(f.count||0)+')</option>').join('');
  source.value=choice;
- const done=scoped.filter(saved).length,names={all:'所有状态',new:'未入库',done:'已入库'},counts={all:scoped.length,new:scoped.length-done,done};
+ const names={all:'所有状态',new:'未入库',done:'已入库',raw:'仅原始'},counts=catalogPage()?.counts||{all:0,new:0,done:0,raw:0};
  for(const o of $('status').options)o.textContent=names[o.value]+' ('+counts[o.value]+')';
- $('scope').textContent=state.syncing?'正在后台刷新收藏…':allItems.length+' 个作品'+(pages>1?' · 第 '+((pageNumber-1)*PAGE_SIZE+1)+'–'+Math.min(pageNumber*PAGE_SIZE,allItems.length)+' 条':'')+($('sort').value==='published'?'，最近发布在前':'');
+ $('scope').textContent=state.syncing?'正在后台刷新收藏…':total+' 个作品'+(pages>1?' · 第 '+((pageNumber-1)*PAGE_SIZE+1)+'–'+Math.min(pageNumber*PAGE_SIZE,total)+' 条':'')+($('sort').value==='published'?'，最近发布在前':'') ;
+ if(!state.syncing&&state.note_check!=='ready'&&state.note_check)
+  $('scope').textContent+=state.note_check==='checking'?' · 正在核验，暂用本地记录':' · 库暂不可核验，保留上次记录';
  paintSyncStatus();
  $('notice').hidden=Boolean(syncPending||state.syncing)||!(sync.updated&&sync.ok===false);
  const notice=syncNotice(sync,account,count);$('connection').textContent=notice.message;
@@ -261,7 +273,7 @@ function renderQueue(queue){
  const rows=new Map([...host.children].map(row=>[row.dataset.job,row]));
  let next=host.firstElementChild;
  for(const j of queue){
-  const title=cleanTitle(findVideo(j.video)?.title||j.video),topics=j.status==='needs_review'?state.topics:[];
+  const title=cleanTitle(findVideo(j.video)?.title||j.video_title||j.video),topics=j.status==='needs_review'?state.topics:[];
   const message=(j.status==='failed'&&failureStages[j.stage]?failureStages[j.stage]+'：':'')+j.message;
   const key=JSON.stringify([j.status,j.note,title,topics]);
   let row=rows.get(j.id);
@@ -291,7 +303,36 @@ function renderQueue(queue){
  for(const [row,dy] of moves)if(Math.abs(dy)>1)settleMotion(queueMoves,row,{transform:'translateY('+dy+'px)'},{transform:'none'},180);
 }
 
-async function readState(){busy=true;clearTimeout(statePollTimer);try{const patch=await api('state'+(state?.catalog_revision?'?catalog='+encodeURIComponent(state.catalog_revision)+'&jobs='+encodeURIComponent(state.jobs_revision||''):''));stateFailures=0;state={...state,...patch};updateNavigationMotion(state.navigation_motion);if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}paintSyncStatus();for(const id of selection){const v=findVideo(id);if(!v||!selectable(v))selection.delete(id)}const {browser,sync_progress,videos,folders,membership,jobs,...stable}=state;const next=JSON.stringify([stable,state.jobs_revision?null:jobs]);if(next!==fingerprint&&!navigationReflow){render();fingerprint=next;if(typeof renderHomepageSummary==='function')renderHomepageSummary()}return true}catch(e){stateFailures++;$('notice').hidden=false;$('connection').textContent='本机服务未连接，请重新打开工作台。';return false}finally{busy=false;scheduleStatePoll()}}
+function paintStateChanges(){
+ if(!state||navigationReflow)return;
+ const {browser,sync_progress,videos,folders,membership,jobs,...stable}=state;
+ const next=JSON.stringify([stable,state.jobs_revision?null:jobs]);
+ if(next===fingerprint)return;
+ render();fingerprint=next;
+ if(typeof renderHomepageSummary==='function')renderHomepageSummary();
+}
+async function readState(){
+ busy=true;clearTimeout(statePollTimer);
+ try{
+  const query=windowQuery(),key=query.toString();
+  if(key!==lastWindow)query.set('view_changed','1');
+  if(state?.catalog_revision)query.set('catalog',state.catalog_revision);
+  if(state?.jobs_revision)query.set('jobs',state.jobs_revision);
+  const patch=await api('state?'+query);
+  if(key!==windowQuery().toString()){refreshAgain=true;return true}
+  stateFailures=0;state={videos:[],...state,...patch};
+  if(patch.catalog_page){
+   state.videos=patch.catalog_page.videos;pageNumber=patch.catalog_page.page;lastWindow=windowQuery().toString();
+  }
+  updateNavigationMotion(state.navigation_motion);
+  if(!syncPollBusy&&!syncPending){syncStatus={syncing:state.syncing,progress:state.sync_progress,sync:state.sync};syncObserved=syncObserved||state.syncing}
+  paintSyncStatus();
+  for(const id of selection){const v=findVideo(id);if(!v||!selectable(v))selection.delete(id)}
+  paintStateChanges();
+  return true;
+ }catch(e){stateFailures++;$('notice').hidden=false;$('connection').textContent='后台连接未确认，请重新打开工作台。';return false}
+ finally{busy=false;scheduleStatePoll()}
+}
 function refresh(){
  if(refreshPromise){refreshAgain=true;return refreshPromise}
  refreshPromise=(async()=>{let ok;do{refreshAgain=false;ok=await readState()}while(refreshAgain&&!document.hidden);return ok})().finally(()=>{refreshPromise=null});
@@ -342,7 +383,7 @@ function setRailGlyphState(expanded){
  const before=navigationMotionEnabled()?pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}}):[];
  railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();
  module.setAttribute('aria-expanded',String(expanded));
- if(!changed||!navigationMotionEnabled())return;
+ if(!changed||!navigationMotionEnabled()||document.body.classList.contains('nav-flight'))return;
  const ends=pieces.map(el=>{const s=getComputedStyle(el);return {transform:s.transform,opacity:s.opacity}});
  pieces.forEach((el,i)=>{
   settleMotion(railGlyphAnimations,el,before[i],ends[i],navigationDuration());
@@ -363,9 +404,10 @@ function updateNavigationMotion(mode){
 function stopNavigationAnimation(){
  navigationGeneration++;
  const pending=navigationReflow;navigationReflow=null;
+ if(pending)queueMicrotask(paintStateChanges);
  navigationAnimations.forEach(animation=>animation.cancel());navigationAnimations=[];
  pending?.restore();
- document.body.classList.remove('nav-moving');
+ document.body.classList.remove('nav-moving','nav-flight');
 }
 function gridColumnCount(){
  const value=getComputedStyle($('cards')).gridTemplateColumns;
@@ -374,35 +416,56 @@ function gridColumnCount(){
 function transitionNavigation(change){
  if(typeof closeWeightTooltip==='function')closeWeightTooltip();
  const workspace=document.querySelector('.workspace'),content=document.querySelector('.workspace-content'),grid=$('cards');
- if(!navigationMotionEnabled()||!workspace.animate){stopNavigationAnimation();change();return}
+ const panel=$('modulepanel'),chrome=document.querySelector('.window-chrome');
+ if(!navigationMotionEnabled()||!workspace.animate||$('panelhost').hidden){stopNavigationAnimation();change();return}
+ const active=$('modules').querySelector('.rail-button.active');
+ const glyphs=active?[...active.querySelectorAll('.rail-symbol svg,.rail-panel-glyph path'),...(active.id==='douyinmodule'?[]:[active.querySelector('svg')])].filter(Boolean):[];
+ const pose=el=>{const style=getComputedStyle(el);return {transform:style.transform,opacity:style.opacity}};
+ const railStarts=glyphs.map(pose),panelStart=getComputedStyle(panel).transform;
+ const chromeStart=chrome&&getComputedStyle(chrome,'::before').transform;
  const before=content.getBoundingClientRect(),viewport=workspace.getBoundingClientRect(),gridBefore=grid.getBoundingClientRect();
  const nodes=document.body.dataset.module==='douyin'&&douyinPage==='library'?[...grid.querySelectorAll(':scope>.card')]:[];
- // Capture the actual displayed geometry, including an interrupted transition.
- // The same nodes stay mounted; no screenshot, opacity hand-off or grid zoom.
  const starts=nodes.map(card=>({card,rect:card.getBoundingClientRect()}));
  const scroll=workspace.scrollTop,edge=viewport.top+20;
  const anchor=starts.find(x=>x.rect.bottom>edge);
- stopNavigationAnimation();change();
- if(!navigationMotionEnabled()||typeof workspace.animate!=='function')return;
- const after=content.getBoundingClientRect();
- if(Math.abs(before.left-after.left)<1)return;
- const gridAfter=grid.getBoundingClientRect(),ends=nodes.map(card=>card.getBoundingClientRect());
+ stopNavigationAnimation();
+ railGlyphAnimations.forEach(a=>a.cancel());railGlyphAnimations.clear();
+ for(const glyph of glyphs){moduleGlyphAnimations.get(glyph)?.cancel();moduleGlyphAnimations.delete(glyph)}
+ document.body.classList.add('nav-flight');
+ change();
+ if(!navigationMotionEnabled()){document.body.classList.remove('nav-flight');return}
+ const panelEnd=getComputedStyle(panel).transform,chromeEnd=chrome&&getComputedStyle(chrome,'::before').transform;
+ const railEnds=glyphs.map(pose),after=content.getBoundingClientRect();
+ const shifting=Math.abs(before.left-after.left)>=1;
+ if(!shifting)starts.length=0;
+ const gridAfter=grid.getBoundingClientRect(),ends=starts.map(({card})=>card.getBoundingClientRect());
  const generation=navigationGeneration,duration=navigationDuration();
  const options={duration,easing:motionEase,fill:'both'};
- const originalGridStyle=grid.getAttribute('style'),styles=nodes.map(card=>card.getAttribute('style'));
- const scrollEnd=anchor&&scroll>0?Math.max(0,workspace.scrollTop+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
+ // Tie every transform to the same document-timeline origin, also on reversal.
+ const clock=document.timeline.currentTime;
+ const start=(element,frames,extra={})=>{
+  const a=element.animate(frames,{...options,...extra});
+  if(clock!==null)a.startTime=clock;
+  navigationAnimations.push(a);return a;
+ };
+ const originalGridStyle=grid.getAttribute('style'),styles=starts.map(({card})=>card.getAttribute('style'));
+ const scrollEnd=shifting&&anchor&&scroll>0?Math.max(0,workspace.scrollTop+ends[nodes.indexOf(anchor.card)].top-anchor.rect.top):scroll;
  let scrollFrame=0,userScrolled=false;
  const manualScroll=()=>{userScrolled=true};
  workspace.addEventListener('wheel',manualScroll,{passive:true});workspace.addEventListener('pointerdown',manualScroll,{passive:true});
  const restore=()=>{
   cancelAnimationFrame(scrollFrame);workspace.removeEventListener('wheel',manualScroll);workspace.removeEventListener('pointerdown',manualScroll);
   grid.style.cssText=originalGridStyle||'';
-  nodes.forEach((card,i)=>{card.style.cssText=styles[i]||''});
+  starts.forEach(({card},i)=>{card.style.cssText=styles[i]||''});
  };
  navigationReflow={restore};document.body.classList.add('nav-moving');
- const slide=content.animate([{transform:`translateX(${before.left-after.left}px)`},{transform:'translateX(0)'}],options);
- navigationAnimations=[slide];
- if(nodes.length){
+ const flight=start(panel,[{transform:panelStart},{transform:panelEnd}]);
+ if(chrome&&chromeStart!==chromeEnd){
+  try{start(chrome,[{transform:chromeStart},{transform:chromeEnd}],{pseudoElement:'::before'})}catch{}
+ }
+ glyphs.forEach((glyph,i)=>start(glyph,[railStarts[i],railEnds[i]]));
+ if(shifting)start(content,[{transform:`translateX(${before.left-after.left}px)`},{transform:'translateX(0)'}]);
+ if(starts.length){
   grid.style.position='relative';grid.style.display='block';grid.style.height=Math.max(scroll>0?gridBefore.height:0,gridAfter.height)+'px';
   // Keep the old scroll range available until settling; no height layout per frame.
   starts.forEach(({card,rect},i)=>{
@@ -419,19 +482,19 @@ function transitionNavigation(change){
    // Layout width once. Per-frame width interpolation regresses frame times on
    // the native renderer; keep text unscaled and animate only cell positions.
    const from=`translate(${dx}px,${dy}px)`;
-   navigationAnimations.push(card.animate([{transform:from},{transform:'translate(0,0)'}],options));
+   start(card,[{transform:from},{transform:'translate(0,0)'}]);
   });
  }
  // Preserve the first visible work when opening the panel far down the list.
  if(scrollEnd!==scroll){
-  const track=()=>{if(generation!==navigationGeneration||userScrolled)return;const t=slide.effect.getComputedTiming().progress??0;workspace.scrollTop=scroll+(scrollEnd-scroll)*t;if(t<1)scrollFrame=requestAnimationFrame(track)};
+  const track=()=>{if(generation!==navigationGeneration||userScrolled)return;const t=flight.effect.getComputedTiming().progress??0;workspace.scrollTop=scroll+(scrollEnd-scroll)*t;if(t<1)scrollFrame=requestAnimationFrame(track)};
   scrollFrame=requestAnimationFrame(track);
  }
  const finish=()=>{
   if(generation!==navigationGeneration)return;
-  navigationAnimations.forEach(a=>a.cancel());navigationAnimations=[];restore();navigationReflow=null;
+  navigationAnimations.forEach(a=>a.cancel());navigationAnimations=[];restore();navigationReflow=null;queueMicrotask(paintStateChanges);
   if(!userScrolled)workspace.scrollTop=scrollEnd;
-  document.body.classList.remove('nav-moving');
+  document.body.classList.remove('nav-moving','nav-flight');
  };
  // If Chromium interrupts one effect without a new navigation generation, its
  // rejected finished promise must also restore flow. Intentional reversals
@@ -475,7 +538,6 @@ function toggleNavigation(){
  else{panelCollapsed=!panelCollapsed;document.body.classList.toggle('panel-collapsed',panelCollapsed)}
  updateNavigationToggle();
  if(workDetailID)syncWorkDetailLayout();
- if(document.body.dataset.module!=='douyin')animateModuleGlyph(document.body.dataset.module,true);
  });
 }
 $('closenav').onclick=()=>closeCompactNavigation(true);
@@ -496,14 +558,15 @@ $('navigationmotion').onchange=async()=>{
  const result=await action('navigation_motion',{mode});
  if(result)updateNavigationMotion(mode);else $('navigationmotion').value=document.body.dataset.navigationMotion||'system';
 };
-const resetPage=()=>{pageNumber=1;if(state)render()};
-$('search').oninput=resetPage;$('status').onchange=$('sort').onchange=resetPage;
+const resetPage=()=>{clearTimeout(searchTimer);pageNumber=1;return refresh()};
+$('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(resetPage,180)};
+$('status').onchange=$('sort').onchange=resetPage;
 $('prevpage').onclick=()=>changePage(pageNumber-1);$('nextpage').onclick=()=>changePage(pageNumber+1);
 $('sync').onclick=startFavoritesRefresh;$('login').onclick=()=>action('login');$('openlogin').onclick=async()=>{const r=await action('open_login');if(r)toast('扫码完成后关闭窗口，刷新在后台进行')};$('refresh').onclick=()=>refreshWithFeedback('refresh',async()=>Boolean(await action('refresh')));
 $('toolsopen').onclick=()=>$('tools').showModal();$('closetools').onclick=()=>$('tools').close();$('queue-refresh').onclick=()=>refreshWithFeedback('queue-refresh',refresh);$('notice-detail').onclick=()=>$('tools').showModal();$('pause').onclick=()=>action(state.paused?'resume':'pause');
-$('import').onclick=async()=>{const r=await action('import',{links:$('links').value});if(r){$('links').value='';view='local';folder='';pageNumber=1;render();$('tools').close();toast('已加入待选列表')}};
+$('import').onclick=async()=>{const r=await action('import',{links:$('links').value});if(r){$('links').value='';view='local';folder='';pageNumber=1;await refresh();$('tools').close();toast('已加入待选列表')}};
 $('clear').onclick=()=>{selection.clear();render()};
-$('selectall').onclick=()=>{const candidates=pageSlice(visible()).filter(selectable);if(candidates.some(v=>selection.has(v.id))){for(const v of candidates)selection.delete(v.id)}else{for(const v of candidates){if(selection.size>=20)break;selection.add(v.id)}}render()};
+$('selectall').onclick=()=>{const candidates=(catalogPage()?.videos||[]).filter(selectable);if(candidates.some(v=>selection.has(v.id))){for(const v of candidates)selection.delete(v.id)}else{for(const v of candidates){if(selection.size>=20)break;selection.add(v.id)}}render()};
 document.addEventListener('change',e=>{const id=e.target.dataset.video;if(!id)return;if(e.target.checked){if(selection.size>=20){e.target.checked=false;toast('每批最多 20 条');return}selection.add(id)}else selection.delete(id);render();document.querySelector('[data-video='+JSON.stringify(id)+']')?.focus({preventScroll:true})});
 let enqueueIDs=[],enqueueBusy=false;
 function closeEnqueueConfirm(){if(!enqueueBusy)$('enqueueconfirm').close()}
@@ -533,27 +596,37 @@ $('enqueue-submit').onclick=async()=>{
 document.addEventListener('click',async e=>{const note=e.target.closest('[data-open-job],[data-open-video]');if(note){e.preventDefault();if(note.getAttribute('aria-busy')==='true')return;note.setAttribute('aria-busy','true');try{await api('open_note',note.dataset.openJob?{job:note.dataset.openJob}:{video:note.dataset.openVideo});toast('已在 Obsidian 打开笔记')}catch(err){toast(err.message)}finally{note.removeAttribute('aria-busy')}return}const elPage=e.target.closest('[data-page]');if(elPage){changePage(Number(elPage.dataset.page));return}const cover=e.target.closest('.cover');if(cover&&!e.target.closest('label,input')){const input=cover.querySelector('[data-video]');if(input&&!input.disabled)input.click();return}const el=e.target.closest('button');if(!el)return;const d=el.dataset;if(d.retry)await action('retry',{id:d.retry});if(d.cancel)await action('cancel',{id:d.cancel});if(d.place){const t=document.querySelector('[data-topic="'+d.place+'"]');await action('place',{id:d.place,topic:t.value})}if(d.preview){try{const r=await api('preview?id='+encodeURIComponent(d.preview));$('previewtext').textContent=r.note_markdown?r.note_markdown+'\n\n画面摘要：\n'+r.visual_summary+'\n\n待核实：\n'+(r.uncertainties||[]).join('\n'):'尚未生成草稿。';$('preview').showModal()}catch(err){toast(err.message)}}});
 $('closepreview').onclick=()=>$('preview').close();
 $('notice-login').onclick=async()=>{const r=await action('open_login');if(r)toast('请扫码登录；成功后关闭窗口，再刷新收藏')};
-// Only a complete pointer gesture on the actual outer backdrop dismisses a panel.
-// Preview closes independently; the underlying queue remains a normal page.
-for(const dialog of document.querySelectorAll('dialog')){
- if(['purchaseeditor','illnesseditor'].includes(dialog.id))continue; // Its own closer protects unsaved edits.
- const close=dialog.id==='enqueueconfirm'?closeEnqueueConfirm:()=>dialog.close();
+// Bind outside dismissal once; an editor supplies its own guarded closer.
+const editorIds=['purchaseeditor','weighteditor','illnesseditor'];
+const editorChecks=new Map();
+function hasPendingEditor(){return [...editorChecks].some(([dialog,pending])=>dialog.open&&pending())}
+function bindBackdrop(dialog,close){
  let down=null;
  const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};
- dialog.addEventListener('pointerdown',e=>{down=outside(e)?e.pointerId:null});
- dialog.addEventListener('pointerup',e=>{if(down===e.pointerId&&outside(e))close();down=null});
+ dialog.addEventListener('pointerdown',e=>{down=e.isPrimary&&outside(e)?e.pointerId:null});
+ dialog.addEventListener('pointerup',e=>{if(down!==null&&down===e.pointerId&&outside(e))close();down=null});
  dialog.addEventListener('pointercancel',()=>down=null);
+}
+function bindEditor(id,close,pending){
+ const dialog=$(id);
+ editorChecks.set(dialog,pending);
+ dialog.addEventListener('cancel',e=>{e.preventDefault();close()});
+ bindBackdrop(dialog,close);
+}
+window.addEventListener('beforeunload',e=>{if(hasPendingEditor()){e.preventDefault();e.returnValue=''}});
+for(const dialog of document.querySelectorAll('dialog')){
+ if(editorIds.includes(dialog.id))continue;
+ bindBackdrop(dialog,dialog.id==='enqueueconfirm'?closeEnqueueConfirm:()=>dialog.close());
 }
 document.addEventListener('visibilitychange',()=>{
  document.documentElement.dataset.motionHidden=String(document.hidden);
- if(document.hidden){clearTimeout(statePollTimer);clearNavigationEffects();queueMoves.forEach(a=>a.cancel());queueMoves.clear()}
+ if(document.hidden){scheduleSyncPoll();clearTimeout(statePollTimer);clearNavigationEffects();queueMoves.forEach(a=>a.cancel());queueMoves.clear()}
  else refresh();
 });
 $('status').value='new'; // Reset the default once per load, not on polling or module switches.
 alignWorkspaceBrand();refresh();
 
-setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing||state?.syncing||syncTransportError))pollSyncStatus()},900);
-setInterval(()=>{if(!document.hidden&&(syncPending||syncStatus?.syncing))paintSyncStatus()},1000);
+
 
 document.addEventListener('click',e=>{
  const link=e.target.closest('[data-work-detail]');

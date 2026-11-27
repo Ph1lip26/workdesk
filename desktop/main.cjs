@@ -8,7 +8,7 @@ if(process.env.WORKDESK_HOME)app.setPath('userData',path.resolve(process.env.WOR
 const home=app.getPath('userData');
 let appearancePreference=appearance.read(home);
 const setupURL=require('node:url').pathToFileURL(path.join(__dirname,'setup.html')).href;
-let window,tray,origin='',backend=null,quitting=false,startup;
+let window,tray,origin='',backend=null,quitting=false,quitPending=false,startup;
 const locked=app.requestSingleInstanceLock();
 if(!locked)app.quit();
 else {
@@ -33,6 +33,7 @@ async function create(){
     titleBarStyle:'hidden',...(process.platform!=='darwin'?{titleBarOverlay:colors}:{}),
     icon,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true,devTools:false}});
   window.on('close',e=>{if(!quitting){e.preventDefault();window.hide()}});
+  window.webContents.on('will-prevent-unload',()=>reportPendingEditor());
   window.on('show',announceOpen);window.on('restore',announceOpen);
   const paintWindow=mode=>{
     if(!window||window.isDestroyed())return;
@@ -47,8 +48,8 @@ async function create(){
   window.webContents.on('will-navigate',(e,url)=>{if(url===setupURL || (origin&&trusted(url,origin)))return;e.preventDefault();if(safeExternal(url))shell.openExternal(url)});
   window.webContents.setWindowOpenHandler(({url})=>{if(safeExternal(url))shell.openExternal(url);return {action:'deny'}});
   tray=new Tray(icon.resize({width:20,height:20}));tray.setToolTip('Workdesk · 个人工作台');tray.on('double-click',show);
-  tray.setContextMenu(Menu.buildFromTemplate([{label:'打开工作台',click:show},{label:'重新加载界面',click:()=>{show();window.webContents.reload()}},
-    {label:'设置',click:async()=>{show();if(await idle())await window.loadURL(setupURL);else dialog.showMessageBox(window,{message:'有任务或后台操作，完成后再修改设置。'})}},
+  tray.setContextMenu(Menu.buildFromTemplate([{label:'打开工作台',click:show},{label:'重新加载界面',click:async()=>{show();try{await ensureNoEditor();window.webContents.reload()}catch{reportPendingEditor()}}},
+    {label:'设置',click:async()=>{show();try{await ensureNoEditor();if(!await idle())throw Error('有任务或后台状态未确认，请稍后再改设置。');await ensureNoEditor();await window.loadURL(setupURL)}catch(e){dialog.showMessageBox(window,{message:e.message})}}},
     {type:'separator'},{label:'彻底退出（不打断任务）',click:quit}]));
   Menu.setApplicationMenu(process.platform==='darwin'?Menu.buildFromTemplate([
     {label:'Workdesk',submenu:[{label:'打开工作台',click:show},{type:'separator'},{label:'退出 Workdesk',accelerator:'Command+Q',click:quit}]},
@@ -76,15 +77,34 @@ async function create(){
       if(c.media_path){if(!path.isAbsolute(c.media_path)||!fs.statSync(c.media_path).isDirectory())throw Error('素材目录无效');const rel=path.relative(c.vault_path,c.media_path);if(!rel.startsWith('..')&&!path.isAbsolute(rel))throw Error('私人素材目录不能放在知识库内部')}
       if(c.hf_endpoint&&!['https://hf-mirror.com'].includes(c.hf_endpoint))throw Error('下载来源无效');
       if(!await idle())throw Error('任务未完成，不能切换配置');
-      await stopBackend();saveConfig(home,c);await startBackend();return {ok:true};
+      const previous=loadConfig(home);
+      if(previous.vault_path)saveConfig(home,previous,'config.last-good.json');
+      await stopBackend();saveConfig(home,c);
+      try{await startBackend()}catch(error){
+        if(previous.vault_path){
+          saveConfig(home,previous);
+          throw Error('新配置未能启动，已恢复上次配置；请重新打开工作台。'+error.message);
+        }
+        throw error;
+      }
+      saveConfig(home,c,'config.last-good.json');return {ok:true};
     }catch(err){return {ok:false,error:err.message}}
   });
-  if(loadConfig(home).vault_path)await startBackend();else await window.loadURL(setupURL);
+  const config=loadConfig(home);
+  if(config.vault_path){
+    await startBackend();
+    saveConfig(home,config,'config.last-good.json');
+  }else await window.loadURL(setupURL);
 }
 function authorizeSetup(e){if(e.sender!==window.webContents || e.senderFrame?.url!==setupURL)throw Error('只允许本机设置页使用此接口')}
+function reportPendingEditor(){dialog.showMessageBox(window,{message:'有尚未保存或正在保存的编辑，请先回到表单处理。'})}
+async function ensureNoEditor(){
+  if(!origin||!trusted(window.webContents.getURL(),origin))return;
+  if(await window.webContents.executeJavaScript("typeof hasPendingEditor !== 'function' || hasPendingEditor()"))throw Error('请先保存或明确放弃当前编辑。');
+}
 async function getToken(){const page=await request(origin,'/');const m=page.match(/name="workbench-token" content="([^"]+)"/);if(!m)throw Error('后台令牌无效');return m[1]}
-async function idle(){if(!origin)return true;try{await request(origin,'/health')}catch{return true}try{const s=JSON.parse(await request(origin,'/api/state',await getToken()));return !s.syncing&&!s.authchecking&&!s.action_running&&!s.jobs.some(j=>['queued','running'].includes(j.status))}catch{return false}}
-async function stopBackend(){if(!origin)return;try{await request(origin,'/health')}catch{origin='';return}await request(origin,'/api/shutdown',await getToken(),'{}');for(let n=0;n<30;n++){try{await request(origin,'/health');await new Promise(r=>setTimeout(r,200))}catch{origin='';return}}throw Error('后台仍在退出，没有强制终止它')}
+async function idle(){if(!origin)return true;try{await request(origin,'/health')}catch{return false}try{const s=JSON.parse(await request(origin,'/api/state',await getToken()));return !s.syncing&&!s.authchecking&&!s.action_running&&!s.jobs.some(j=>['queued','running'].includes(j.status))}catch{return false}}
+async function stopBackend(){if(!origin)return;try{await request(origin,'/health')}catch{throw Error('后台状态暂时无法确认，未停止服务。')}await request(origin,'/api/shutdown',await getToken(),'{}');for(let n=0;n<30;n++){try{await request(origin,'/health');await new Promise(r=>setTimeout(r,200))}catch(e){if(e.code==='ECONNREFUSED'){origin='';return}}}throw Error('后台仍在退出，没有强制终止它')}
 async function startBackend(){
   fs.mkdirSync(home,{recursive:true});
   const stateFile=path.join(home,'backend.json');
@@ -106,10 +126,22 @@ async function startBackend(){
   throw Error('后台启动失败，请查看本机 backend.log；可从托盘设置检查路径');
 }
 async function quit(){
-  if(quitting)return;
-  try{if(!await idle())throw Error('有排队任务、运行任务、同步或登录检查，不能彻底退出。关闭窗口会继续处理。');
+  if(quitting||quitPending)return;
+  quitPending=true;
+  let lockedView=false;
+  try{
+    await ensureNoEditor();
+    if(!await idle())throw Error('有待处理任务或后台状态未确认；关闭窗口会让任务继续。');
+    if(origin&&trusted(window.webContents.getURL(),origin)){
+      // Check and freeze in one renderer task so no new draft can start during backend shutdown.
+      lockedView=await window.webContents.executeJavaScript("typeof hasPendingEditor==='function'&&!hasPendingEditor()&&(document.body.inert=true)");
+      if(!lockedView)throw Error('请先保存或明确放弃当前编辑。');
+    }
     await stopBackend();quitting=true;tray?.destroy();app.quit();
-  }catch(e){show();dialog.showMessageBox(window,{message:e.message})}
+  }catch(e){
+    if(lockedView)await window.webContents.executeJavaScript('document.body.inert=false').catch(()=>{});
+    show();dialog.showMessageBox(window,{message:e.message});
+  }finally{quitPending=false}
 }
 // Main-process only: the renderer receives no test, process, or filesystem bridge.
 module.exports={get startup(){return startup},get window(){return window},get origin(){return origin},idle,stopBackend,quit,show};

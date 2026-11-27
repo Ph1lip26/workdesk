@@ -39,7 +39,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('native default page is personal home',await js("document.body.dataset.module==='home'&&!document.getElementById('homeview').hidden"));
   check('homepage provides concise manual-refresh state and schedule slots',await js("$('home-current-brief')&&$('home-next-brief')&&$('home-refresh').textContent.includes('更新摘要')&&!document.querySelector('.status-record')"));
   check('library starts with only unsaved works',await js("$('status').value==='new'"));
-  await js("$('status').value='all';$('status').dispatchEvent(new Event('change'))");
+  await js("$('status').value='all';$('status').onchange()");
   check('homepage and library are separate registered modules',await js("Object.keys(moduleRegistry).length===4&&document.getElementById('douyinview').hidden"));
   check('home has six movable cards',await js("document.querySelectorAll('#home-cards>[data-home-card]').length===6"));
   check('home has no secondary navigation',await js("document.getElementById('panelhost').hidden&&document.getElementById('modulepanel').inert"));
@@ -247,7 +247,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
     check(`${mode} ${width}: end of full status is reachable`,await js("(()=>{const b=document.querySelector('[data-home-card=status] .tile-body'),s=b.querySelector('.status-record>span');return s.textContent.endsWith('完整正文结束标记')&&s.scrollWidth<=s.clientWidth+1&&b.scrollTop>0})()"));
    }
    w.setContentSize(1180,760);await js("paintAppearance('night');document.querySelector('[data-home-card=status] .tile-body').scrollTop=0");await sleep(150);await capture(path.join(fixture,'home-readable.png'));
-   w.setContentSize(1180,760);await js("paintAppearance('night');selectModule('douyin',{animate:false});pageNumber=2;selection.add(state.videos[1].id);render();document.querySelector('.workspace').scrollTop=220");await sleep(100);
+   w.setContentSize(1180,760);await js("paintAppearance('night');selectModule('douyin',{animate:false});selection.add(state.videos[1].id);changePage(2).then(()=>document.querySelector('.workspace').scrollTop=220)");await sleep(100);
    const libraryBefore=await js('JSON.stringify([pageNumber,[...selection],view,folder])');
    await js("document.getElementById('queueopen').click()");await navigationSettled();
    check('queue occupies main content with selected secondary navigation',await js("!document.getElementById('queuepanel').hidden&&document.getElementById('librarypage').hidden&&document.getElementById('queueopen').getAttribute('aria-current')==='page'&&!document.querySelector('dialog:modal')&&location.hash==='#queue'"));
@@ -573,7 +573,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
    check('duplicate show and focus events remain side effect free',await js('window.__openingCalls.length'),0);
    await js("document.getElementById('purchase-editor-close').click();document.getElementById('purchase-discard-confirm').click()");
    await js("document.getElementById('douyinmodule').click()");await navigationSettled();
-   await js("pageNumber=2;selection.add(state.videos[1].id);render()");
+   await js("selection.add(state.videos[1].id);changePage(2)");
    const selected=await js('JSON.stringify([...selection])');
    await sleep(1300);w.minimize();desk.show();await sleep(500);
    check('restore retains library page and selected videos',await js("pageNumber===2&&JSON.stringify([...selection])==="+JSON.stringify(selected)));
@@ -630,7 +630,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   await js("document.getElementById('purchase-discard-keep').click();document.getElementById('purchase-candidate-add').click();document.querySelector('[data-candidate-field=name]').value='合成候选';document.querySelector('[data-candidate-field=price]').value='90元';document.querySelector('[data-candidate-field=checked_at]').value='2025-01-01';document.getElementById('purchaseform').requestSubmit()");
   for(let n=0;n<40;n++){if(await js("purchaseState?.records.some(r=>r.title==='合成购买事项')&&!document.getElementById('purchaseeditor').open"))break;await sleep(100)}
   check('purchase save roundtrips actual SQLite data',await js("purchaseState.records.some(r=>r.title==='合成购买事项'&&r.candidates[0].price==='90元'&&r.origin==='advice'&&r.revision===1)"));
-  check('purchase details reuse one opaque brushed material',await js("(()=>{const p=getComputedStyle(document.querySelector('.purchase-section')),h=getComputedStyle(document.querySelector('.home-tile'));return p.backgroundColor===h.backgroundColor&&p.backgroundImage===h.backgroundImage})()"));
+  check('purchase and home materials share an opaque base without noisy textures',await js("(()=>{const p=getComputedStyle(document.querySelector('.purchase-section')),h=getComputedStyle(document.querySelector('.home-tile'));return p.backgroundColor===h.backgroundColor&&/^rgb[(]/.test(p.backgroundColor)&&[p,h].every(s=>s.backdropFilter==='none'&&!/data:image|repeating-linear-gradient/.test(s.backgroundImage))})()"));
   const purchaseId=await js("purchaseState.records.find(r=>r.title==='合成购买事项').id");
   await js(`showPurchaseBrief(${JSON.stringify(purchaseId)})`);
   check('purchase brief shows historical prices and AI provenance',await js("document.getElementById('purchasebrief').open&&document.getElementById('purchase-brief-text').value.includes('2025-01-01')&&document.getElementById('purchase-brief-text').value.includes('AI建议')&&document.getElementById('purchase-brief-text').value.includes('不是实时市场信息')"));
@@ -709,11 +709,13 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   w.setContentSize(1440,920);await sleep(180);await js("applyHomeOrder(HOME_CARD_IDS)");
   check('native homepage has opaque steel status material',await js("getComputedStyle(document.querySelector('[data-home-card=status]')).backgroundColor==='rgb(48, 48, 48)'&&getComputedStyle(document.querySelector('[data-home-card=status]')).backdropFilter==='none'"));
   check('native homepage header has no date or clock',await js("!document.querySelector('.home-top p,.home-top time')"));
-  check('native summary evidence is accessible without generating',await js("$('summary-home-details')&&$('home-current-brief').textContent.includes('点击')"));
+  await js("requestSummary('home')");
+  check('native summary source preview opens without calling the model',await js("$('homedetail').open&&Boolean($('summary-generate'))"));
+  await js("$('homedetail').close()");
   check('native generic brand fallback is local and loaded',await js("(()=>{const img=document.querySelector('.workspace-logo');return img.complete&&img.naturalWidth===512&&img.getAttribute('src')==='/brand'})()"));
-  check('native large-window summary placeholders stay readable',await js("parseFloat(getComputedStyle($('home-current-brief').querySelector('p')).fontSize)>=14&&parseFloat(getComputedStyle(document.querySelector('.collection-total strong')).fontSize)>=28"));
+  check('native large-window summary placeholders stay readable',await js("parseFloat(getComputedStyle($('home-current-brief').querySelector('p')).fontSize)>=14&&document.querySelector('#home-module-summary .home-inventory').textContent.includes('65')"));
   check('native cards have natural larger corners and one shared brushed metal finish',await js("parseFloat(getComputedStyle(document.querySelector('.home-tile')).borderRadius)>=28&&(()=>{const s=[...document.querySelectorAll('.home-tile')].map(c=>getComputedStyle(c));return s.every(c=>!c.backgroundImage.includes('data:image')&&!c.backgroundImage.includes('repeating-linear-gradient'))&&new Set(s.map(c=>c.backgroundColor)).size===1&&new Set(s.map(c=>c.backgroundImage)).size===1})()"));
-  check('native local-material card shows records with honest wording',await js("document.querySelector('.material-total strong').textContent==='65'&&document.querySelector('.material-note').textContent.includes('包含收藏')"));
+  check('native local-material card shows records with honest wording',await js("document.querySelector('#home-material-summary .home-inventory').textContent.includes('65')"));
   check('native material cards have no backdrop filter workload',await js("getComputedStyle(document.querySelector('.home-tile')).backdropFilter==='none'&&getComputedStyle(document.body,'::before').pointerEvents==='none'"));
   // Real pointer input needs a settled, active window; the launcher itself is hidden.
   desk.show();await sleep(250);
@@ -725,7 +727,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   wc.sendInputEvent({type:'mouseMove',...modulePoint});wc.sendInputEvent({type:'mouseDown',...modulePoint,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',...modulePoint,button:'left',clickCount:1});await sleep(350);
   check('native whole-card heading enters Douyin',await js("currentModule==='douyin'"));
   await js("document.getElementById('homemodule').click()");await sleep(350);
-  check('native home module data returns without a secondary menu',await js("document.getElementById('panelhost').hidden&&document.querySelector('.collection-total strong').textContent==='65'"));
+  check('native home module data returns without a secondary menu',await js("document.getElementById('panelhost').hidden&&document.querySelector('#home-module-summary .home-inventory').textContent.includes('65')"));
   const homeJobsBefore=await js("JSON.stringify(state.jobs)");
   await js("applyHomeOrder(HOME_CARD_IDS);persistHomeOrder()");
   const dragPoints=await js("(()=>{const a=document.querySelector('[data-home-handle=next]').getBoundingClientRect(),b=document.querySelector('[data-home-card=douyin]').getBoundingClientRect();return {from:{x:Math.round(a.left+a.width/2),y:Math.round(a.top+a.height/2)},to:{x:Math.round(b.left+b.width/2),y:Math.round(b.top+100)}}})()");
@@ -903,7 +905,7 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('native glyph never flashes between delayed phases',reflow.glyph>.98);
   check('native reflow has no final geometry jump or stuck layout',reflow.clean&&reflow.endJump<2&&reflow.edge<1);
   await js("document.getElementById('douyinmodule').click()");await navigationSettled();
-  await js("$('status').value='all';$('status').dispatchEvent(new Event('change'))");
+  await js("$('status').value='all';$('status').onchange()");
   check('first work is newest favorite',await js("document.querySelector('.card').dataset.id"),'1000000000000000001');
   check('existing note is recognized',await js("document.querySelector('.card').dataset.status"),'done');
   check('saved work can be selected for read-only action ideas',await js("!document.querySelector('.card input').disabled"));
@@ -911,11 +913,11 @@ function check(name,actual,expected=true){assert.equal(actual,expected,name);che
   check('selected saved work still cannot re-enqueue',await js("selection.size===1&&document.getElementById('enqueue').disabled"));
   check('selected saved note enables only action-idea analysis',await js("!document.getElementById('ideas-from-selection').disabled"));
   await js("document.querySelector('.card input').click()");
-  await js("document.getElementById('nextpage').click()");
+  await js("document.getElementById('nextpage').onclick()");
   check('second page starts at thirty-one',await js("document.querySelector('.card').dataset.id"),'1000000000000000031');
-  await js("document.getElementById('nextpage').click()");
+  await js("document.getElementById('nextpage').onclick()");
   check('last page has five cards',await js("document.querySelectorAll('.card').length"),5);
-  await js("document.getElementById('status').value='done';document.getElementById('status').dispatchEvent(new Event('change'))");
+  await js("$('status').value='done';$('status').onchange()");
   check('filter clamps page',await js("document.querySelectorAll('.card').length"),1);
   check('done filter contains existing note',await js("document.querySelector('.card').dataset.status"),'done');
   await js("document.getElementById('queueopen').click()");

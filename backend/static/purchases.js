@@ -162,15 +162,8 @@ $('purchaseform').onsubmit=async e=>{
 };
 $('purchase-open-note').onclick=async()=>{if(!purchaseEditing?.id)return;try{await api('open_purchase_note',{id:purchaseEditing.id})}catch(e){toast(e.message)}};
 $('purchase-editor-close').onclick=closePurchaseEditor;$('purchase-editor-cancel').onclick=closePurchaseEditor;
-$('purchase-discard-confirm').onclick=()=>{purchaseDirty=false;$('purchaseeditor').close()};
+$('purchase-discard-confirm').onclick=()=>{if(purchaseSaving)return;purchaseDirty=false;$('purchaseeditor').close()};
 $('purchase-discard-keep').onclick=()=>{$('purchase-discard').hidden=true;$('purchase-title').focus()};
-$('purchaseeditor').addEventListener('cancel',e=>{e.preventDefault();closePurchaseEditor()});
-// Require a complete outside gesture; retain dirty text until explicit discard.
-let purchaseBackdropPointer=null;
-const purchaseOutside=e=>{const d=$('purchaseeditor'),r=d.getBoundingClientRect();return e.target===d&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};
-$('purchaseeditor').addEventListener('pointerdown',e=>{purchaseBackdropPointer=purchaseOutside(e)?e.pointerId:null});
-$('purchaseeditor').addEventListener('pointerup',e=>{if(purchaseBackdropPointer===e.pointerId&&purchaseOutside(e))closePurchaseEditor();purchaseBackdropPointer=null});
-$('purchaseeditor').addEventListener('pointercancel',()=>purchaseBackdropPointer=null);
+bindEditor('purchaseeditor',closePurchaseEditor,()=>purchaseDirty||purchaseSaving);
 $('purchasebrief-close').onclick=()=>$('purchasebrief').close();$('purchase-brief-copy').onclick=copyPurchaseBrief;
-window.addEventListener('beforeunload',e=>{if(purchaseDirty&&$('purchaseeditor').open){e.preventDefault();e.returnValue=''}});
 refreshPurchases();

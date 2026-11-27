@@ -1,4 +1,4 @@
-"""Copy queue metadata into a new local home; credentials and media are never copied."""
+"""Copy the private local database (including personal records); login files and media are not copied."""
 import argparse,json,sqlite3
 from pathlib import Path
 
@@ -27,6 +27,6 @@ def main():
     config={'vault_path':str(vault),'media_path':str(a.media.resolve()) if a.media else '',
         'codex_path':str(a.codex.resolve()) if a.codex else '', 'obsidian_path':str(a.obsidian.resolve()) if a.obsidian else ''}
     (dest/'config.json').write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding='utf-8')
-    print('Local queue copied. Original data unchanged. Login credentials were NOT copied; queue starts paused.')
+    print('Private database copied, including saved personal records. Original data unchanged. Login files and media were NOT copied; queue starts paused.')
 
 if __name__=='__main__':main()

@@ -65,14 +65,13 @@ function openWeightEditor(id=''){
  $('weight-delete').hidden=!weightEditing;$('weight-delete').textContent='删除记录';$('weight-error').hidden=true;
  $('weighteditor').showModal();$('weight-value').focus();
 }
-function closeWeightEditor(){
+function closeWeightEditor(discard=false){
  if(weightSaving)return;
- if(weightDirty&&$('weight-close').textContent!=='放弃修改并关闭'){$('weight-close').textContent='放弃修改并关闭';$('weight-error').textContent='有未保存的修改；再次点击关闭将放弃。';$('weight-error').hidden=false;return}
+ if(weightDirty&&!discard){$('weight-close').textContent='放弃修改并关闭';$('weight-error').textContent='有未保存的修改；再次点击关闭将放弃。';$('weight-error').hidden=false;return}
  $('weighteditor').close();$('weight-close').textContent='关闭';weightDirty=false;
 }
-$('weight-close').onclick=closeWeightEditor;
-$('weighteditor').addEventListener('cancel',e=>{e.preventDefault();closeWeightEditor()});
-$('weighteditor').addEventListener('click',e=>{if(e.target!==$('weighteditor'))return;const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeWeightEditor()});
+$('weight-close').onclick=()=>closeWeightEditor($('weight-close').textContent==='放弃修改并关闭');
+bindEditor('weighteditor',closeWeightEditor,()=>weightDirty||weightSaving);
 $('weight-form').addEventListener('input',()=>{weightDirty=true;weightDeleteArmed=false;$('weight-delete').textContent='删除记录';$('weight-close').textContent='关闭'});
 $('weight-unit').onchange=()=>{
  const input=$('weight-value'),previous=input.step==='0.001'?'kg':'jin',unit=$('weight-unit').value;

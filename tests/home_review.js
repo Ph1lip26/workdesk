@@ -13,7 +13,7 @@ async (page,output='build')=>{
  check('only two key next records on homepage',await page.locator('#homeview .schedule-record').count()===2);
  check('uncertain original date is not scheduled as confirmed',await page.locator('.schedule-record').first().textContent().then(t=>t.includes('原 ')&&t.includes('日期待确认')));
  check('unstarted plans remain deferred beside purchase entry',await page.locator('[data-home-card=later]').textContent().then(t=>t.includes('早期规划')&&t.includes('购买决策夹')));
- check('collection counters use actual fixture data',await page.locator('.collection-total strong').textContent()==='65'&&await page.locator('.collection-meta').textContent().then(t=>t.includes('已入库 1')));
+ check('collection counters use actual fixture data',await page.locator('#home-module-summary .home-inventory').textContent().then(t=>t.includes('65 条收藏')&&t.includes('64 条未入库')));
  check('opening homepage only refreshes derived data and never calls AI',mutations.every(p=>p==='/api/open_refresh'));
  {const r=await page.locator('[data-home-card=douyin] h2').boundingBox();await page.mouse.click(r.x+r.width/2,r.y+r.height/2);}await page.waitForTimeout(300);
  check('module card heading is a real full-card link',await page.evaluate(()=>currentModule==='douyin'));
@@ -27,7 +27,7 @@ async (page,output='build')=>{
  await page.locator('[data-home-handle=douyin]').click();
  check('drag handle click does not navigate away',await page.evaluate(()=>currentModule==='home'));
 
- check('local card counts content records, not downloaded files',await page.locator('.material-total strong').textContent()==='65'&&await page.locator('.material-meta').textContent().then(t=>t.includes('已入库 1'))&&await page.locator('.material-note').textContent().then(t=>t.includes('包含收藏')));
+ check('local card counts content records, not downloaded files',await page.locator('#home-material-summary .home-inventory').textContent().then(t=>t.includes('65 条记录')&&t.includes('1 条已入库')));
  {const r=await page.locator('[data-home-card=materials] h2').boundingBox();await page.mouse.click(r.x+r.width/2,r.y+r.height/2);}await page.waitForTimeout(300);
  check('local full-card link enters existing local records at the top',await page.evaluate(()=>currentModule==='douyin'&&view==='local'&&document.querySelectorAll('.card').length===30&&document.querySelector('.workspace').scrollTop===0));
  await page.locator('#homemodule').click();await page.waitForTimeout(300);
@@ -113,7 +113,7 @@ async (page,output='build')=>{
  check('layout updates did not alter material records',await page.evaluate(before=>JSON.stringify(state.videos)===before,videosBefore));
  const fake={configured:false,date:await page.evaluate(()=>homeState.date),sources:[],actions:[],schedule:[],projects:[],waiting:[],links:[]};
  await page.route('**/api/home',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(fake)}));await page.waitForFunction(()=>!homeBusy);await page.locator('#home-refresh').click();await page.waitForFunction(()=>homeState?.configured===false&&document.querySelectorAll('[data-home-card]').length===2);
- check('unbound personal notes do not hide real module data',await page.locator('#homeview').textContent().then(t=>t.includes('尚未绑定'))&&await page.locator('.collection-total strong').textContent()==='65');await page.unroute('**/api/home');await page.waitForFunction(()=>!homeBusy);await page.locator('#home-refresh').click();
+ check('unbound personal notes do not hide real module data',await page.locator('#homeview').textContent().then(t=>t.includes('尚未绑定'))&&await page.locator('#home-module-summary .home-inventory').textContent().then(t=>t.includes('65 条收藏')));await page.unroute('**/api/home');await page.waitForFunction(()=>!homeBusy);await page.locator('#home-refresh').click();
  await page.waitForFunction(()=>homeState?.configured);await page.setViewportSize({width:1440,height:920});await page.waitForTimeout(4700);
  await page.screenshot({path:output+'/home-cards-desktop.png'});
  check('no page errors',errors.length===0);

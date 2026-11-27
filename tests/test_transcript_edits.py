@@ -46,7 +46,7 @@ class TranscriptModelContractTests(unittest.TestCase):
             self.service=Service(Store(self.root/'state.sqlite3'),self.vault,start_worker=False)
     def tearDown(self):self.temp.cleanup()
     def output(self,edits):
-        return dict(title='合成校对示例',topic='处理文件/测试主题',needs_placement=False,transcript_corrections=edits,
+        return dict(title='合成校对示例',topic='处理文件/测试主题',needs_placement=False,transcript_corrections=edits,visual_review=dict(reason='none',timestamps=[]),
             visual_summary='合成图示',evidence=[dict(timestamp=1,kind='visual',content='图示')],uncertainties=[],note_markdown='完整合成知识笔记')
     def model(self,output):
         def command(args,logfile,**kw):
@@ -68,6 +68,42 @@ class TranscriptModelContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'原文不匹配'):self.service.analyze('1000000000000000001',self.media,self.run)
         self.assertFalse((self.run/'verified-analysis.json').exists())
         self.assertEqual((self.media/'transcript_raw.txt').read_text(encoding='utf-8'),self.raw)
+    def test_extra_frames_gate_review_and_keep_only_one_second_pass(self):
+        for reason,model,effort in (('detail','gpt-6.2-sol','low'),('conflict','gpt-6.2-astra','medium'),
+                                    ('sequence','gpt-6.2-astra','medium')):
+            with self.subTest(reason=reason):
+                first=self.output([]);first['visual_review']=dict(reason=reason,timestamps=[2,2,-1])
+                revised=self.output([]);revised['note_markdown']='Revised using a full-size frame'
+                def mock(args,logfile,**kw):
+                    if Path(logfile).name=='review-frames.log':
+                        extra=Path(args[args.index('--review-dir')+1]);self.assertEqual(args[-1:], [2])
+                        atomic_json(extra/'frames.json',[2.1]);(extra/'frame_000.jpg').write_bytes(b'synthetic')
+                    elif Path(logfile).name=='codex-review-events.jsonl':
+                        self.assertEqual(args[args.index('--model')+1],model)
+                        self.assertIn(f'model_reasoning_effort="{effort}"',args)
+                        self.assertTrue(any(isinstance(x,Path) and x.name=='frame_000.jpg' and x.is_file() for x in args))
+                        self.assertIn('2.1',kw['stdin']);atomic_json(args[args.index('--output-last-message')+1],revised)
+                        Path(logfile).write_text('',encoding='utf-8')
+                    else:self.model(first)(args,logfile,**kw)
+                with patch('core.discover_codex',return_value='codex'),patch.object(self.service,'run_command',side_effect=mock) as cmd:
+                    result=self.service.analyze('1000000000000000001',self.media,self.run)
+                self.assertEqual(result['note_markdown'],revised['note_markdown'])
+                self.assertNotIn('visual_review',result)
+                self.assertEqual(cmd.call_count,3)
+                self.assertEqual(read_json(self.run/'analysis-models.json')['final_model'],model)
+                self.assertFalse(list(self.run.glob('review-frames-*')))
+
+    def test_missing_extra_frames_does_not_spend_another_model_call(self):
+        first=self.output([]);first['visual_review']=dict(reason='conflict',timestamps=[2])
+        def command(args,logfile,**kw):
+            if Path(logfile).name=='review-frames.log':raise RuntimeError('synthetic decoder error')
+            self.model(first)(args,logfile,**kw)
+        with patch('core.discover_codex',return_value='codex'),patch.object(self.service,'run_command',side_effect=command) as cmd:
+            result=self.service.analyze('1000000000000000001',self.media,self.run)
+        self.assertEqual(cmd.call_count,2)
+        self.assertTrue(result['uncertainties'])
+        self.assertEqual(read_json(self.run/'analysis-models.json')['review_status'],'no_extra_frames')
+
     def test_zero_edits_return_the_complete_original_transcript(self):
         with patch('core.discover_codex',return_value='codex'),patch.object(self.service,'run_command',side_effect=self.model(self.output([]))):
             self.assertEqual(self.service.analyze('1000000000000000001',self.media,self.run)['transcript_clean'],self.raw)

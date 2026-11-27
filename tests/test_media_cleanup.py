@@ -24,6 +24,7 @@ class MediaCleanupTests(unittest.TestCase):
         self.note.write_text('source: https://www.douyin.com/video/'+ID,encoding='utf-8')
         (self.topic/'_索引.md').write_text('[[处理文件/测试/测试笔记.md]]',encoding='utf-8')
         (self.raw.parent/'_处理日志.md').write_text(f'<!-- douyin-workbench:{ID} -->',encoding='utf-8')
+        for zone in ('输出文件','skills'):(self.vault/zone).mkdir()
         self.proof()
     def tearDown(self):self.tmp.cleanup()
     def proof(self):
@@ -36,6 +37,10 @@ class MediaCleanupTests(unittest.TestCase):
         self.assertEqual(result['bytes'],4*len(b'synthetic data'))
         self.assertTrue((self.folder/'meta.json').exists());self.assertTrue((self.folder/'transcript_raw.txt').exists());self.assertTrue((self.folder/'keep.bin').exists())
         self.assertEqual((self.note.read_bytes(),self.raw.read_bytes()),before);self.assertEqual(self.clean()['deleted'],[])
+    def test_missing_zone_never_removes_media(self):
+        (self.vault/'skills').rmdir()
+        with self.assertRaises(ValueError):self.clean()
+        self.assertTrue((self.folder/'video.mp4').is_file())
     def test_dry_run_never_deletes(self):
         result=self.clean(dry_run=True);self.assertTrue(result['dry_run']);self.assertTrue((self.folder/'video.mp4').exists())
         self.assertEqual(result['bytes'],self.clean()['bytes'])

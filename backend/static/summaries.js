@@ -11,7 +11,13 @@ function summaryRows(scope,items){
 }
 function homeBriefRows(key){
  const all=cachedSummary('home')?.result?.items||[];
- return summaryItems('home',key).map(i=>'<button class="home-brief-row quiet" data-summary-scope="home" data-summary-index="'+all.indexOf(i)+'" title="查看来源与完整依据"><span>'+(i.kind==='advice'?'AI建议：':'')+esc(i.when&&i.when.length<=10&&!i.text.includes(i.when)?i.when+' · ':'')+esc(i.text)+'</span></button>').join('');
+ const rows=summaryItems('home',key).slice(0,key==='current'?1:3);
+ return rows.map(i=>{
+  const stamp=key==='next'?i.when||summaryKind[i.kind]||'安排':'';
+  const label=i.when&&/^\d{4}-\d{2}-\d{2}$/.test(i.when)?i.when.slice(5):stamp;
+  const marker=stamp?'<span class="home-brief-date" title="'+esc(stamp)+'">'+esc(label)+'</span>':'';
+  return '<button class="home-brief-row quiet" data-summary-scope="home" data-summary-index="'+all.indexOf(i)+'" title="查看来源和完整解释">'+marker+'<span class="home-brief-text">'+(i.kind==='advice'?'AI 建议：':'')+esc(i.text)+'</span></button>';
+ }).join('');
 }
 function summaryStateText(scope){
  if(summaryLoadError)return '摘要服务暂时无法读取；显示上次内容：'+summaryLoadError;
@@ -25,8 +31,8 @@ function summarySet(id,html){const e=$(id);if(e&&e.dataset.summaryHtml!==html){e
 function paintSummaries(){
  if(typeof homeDrag!=='undefined'&&(homeDrag||homeLandingGhosts.size))return;
  const r=cachedSummary('home');
- summarySet('home-current-brief',homeBriefRows('current')||'<p class="tile-note">点击“更新摘要”，从最新知识库提炼当前阶段与重点。</p>');
- summarySet('home-next-brief',homeBriefRows('next')||'<p class="tile-note">'+(r?.updated?'未提取到仍有效的安排，请查看来源与提示。':'点击“更新摘要”，提取已有安排和明确的等待条件。')+'</p>');
+ summarySet('home-current-brief',homeBriefRows('current')||'<p class="tile-note">还没有状态摘要。</p>');
+ summarySet('home-next-brief',homeBriefRows('next')||'<p class="tile-note">'+(r?.updated?'未提取到仍有效的安排，请查看来源与提示。':'还没有安排摘要。')+'</p>');
  const rows=summaryItems('home','purchase');
  if($('home-purchases-summary')){
   const records=typeof purchaseState!=='undefined'?purchaseState?.records||[]:[];
@@ -78,12 +84,28 @@ async function loadSummaries(){
 }
 async function requestSummary(scope){
  if(summaryStarting||summaryState.running)return;
- summaryStarting=true;summaryMessages.set(scope,'正在读取资料…');paintSummaries();
+ summaryStarting=true;summaryMessages.set(scope,'正在整理可预览的资料…');paintSummaries();
  try{
-  if(scope==='home')await Promise.all([refreshHomepage(),refreshPurchases(),refreshHealth()]);
-  else await refreshPurchases();
-  const r=await api('summary_refresh',{scope});if(r.status==='unchanged')summaryMessages.set(scope,r.message);else summaryMessages.delete(scope);await loadSummaries();
-  if(r.status==='unchanged')toast(r.message);
+  const data=await api('summary_preview',{scope});
+  $('home-detail-title').textContent='生成前预览';
+  const title={current:'当前状态',next:'近期安排',purchase:'购买记录'};
+  $('home-detail-content').innerHTML='<p class="tile-evidence">以下是本次会使用的内容。预览未调用模型，确认后才生成。</p>'+
+   data.documents.map(d=>'<details><summary>'+esc(title[d.purpose]||d.purpose)+' · '+esc(d.title)+(d.heading?' · '+esc(d.heading):'')+'</summary><p class="summary-input-text">'+esc(d.text)+'</p></details>').join('')+
+   data.warnings.map(w=>'<p class="notice">'+esc(w)+'</p>').join('')+
+   '<button id="summary-generate" type="button">确认并生成</button>';
+  $('summary-generate').onclick=()=>generateSummary(scope,data.digest);
+  summaryMessages.delete(scope);
+  if(!$('homedetail').open)$('homedetail').showModal();
+ }catch(e){summaryMessages.set(scope,e.message);toast(e.message)}
+ finally{summaryStarting=false;paintSummaries()}
+}
+async function generateSummary(scope,digest){
+ if(summaryStarting||summaryState.running)return;
+ $('homedetail').close();summaryStarting=true;summaryMessages.set(scope,'正在提交…');paintSummaries();
+ try{
+  const r=await api('summary_refresh',{scope,digest});
+  if(r.status==='unchanged'){summaryMessages.set(scope,r.message);toast(r.message)}else summaryMessages.delete(scope);
+  await loadSummaries();
  }catch(e){summaryMessages.set(scope,e.message);toast(e.message)}
  finally{summaryStarting=false;paintSummaries()}
 }
@@ -93,7 +115,7 @@ function inspectSummary(scope,index){
  $('home-detail-title').textContent=item?'摘要依据':'摘要来源与提示';
  $('home-detail-content').innerHTML=items.map(i=>'<section class="summary-proof"><h3>'+esc(i.text)+'</h3><p class="tile-evidence">'+esc(summaryKind[i.kind])+'</p>'+i.evidence.map(e=>{
   const source=record.sources.find(s=>s.id===e.source_id);
-  return '<blockquote>'+esc(e.quote)+'</blockquote><p class="tile-evidence">'+esc(source?.title||'来源')+(source?.excerpt?' · 使用所选片段，非全文分析':'')+'</p>'+(source?.path?'<button class="quiet" data-summary-open="'+esc(source.id)+'" data-proof-scope="'+esc(scope)+'">在Obsidian查看来源</button>':'');
+  return '<blockquote>'+esc(e.quote)+'</blockquote><p class="tile-evidence">'+esc(source?.title||'来源')+(source?.heading?' · '+esc(source.heading):'')+(source?.excerpt?' · 使用所选片段，非全文分析':'')+'</p>'+(source?.path?'<button class="quiet" data-summary-open="'+esc(source.id)+'" data-proof-scope="'+esc(scope)+'">在Obsidian查看来源</button>':'');
  }).join('')+'</section>').join('')+(record?.result?.warnings||[]).map(w=>'<p class="notice">'+esc(w)+'</p>').join('');
  if(!$('homedetail').open)$('homedetail').showModal();
 }

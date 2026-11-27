@@ -1,5 +1,14 @@
 # Workdesk 版本记录
 
+## 0.2.8 - Windows x64 (2026-11-27)
+
+- Paginate the catalog on the backend while keeping counts and selected records across pages.
+- Use the bundled Chromium browser for both background and interactive sessions.
+- Show cached records during startup verification and preview summary inputs before generation.
+- Protect drafts and existing notes, preserve the last working configuration, and limit media downloads.
+- Use GPT-6.2 Sol (low) for standard multimodal intake. Supplement key video frames and use Astra for concrete multimodal conflicts or unclear step order.
+
+
 ## 0.2.7 - Windows x64 (2026-11-20)
 
 - Refined motion, queue recovery, and lightweight state synchronization.

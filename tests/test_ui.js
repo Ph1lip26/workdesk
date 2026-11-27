@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
 const elements={search:{value:''},status:{value:'all'},sort:{value:'collection'}};
-const context=vm.createContext({document:{querySelector:()=>({content:'test-token'}),getElementById:id=>elements[id]},Set,Map,Number,URL});
+const context=vm.createContext({document:{querySelector:()=>({content:'test-token'}),getElementById:id=>elements[id]},Set,Map,Number,URL,URLSearchParams});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../backend/static/app.js'),'utf8').split('function render(){')[0],context);
 const fixture={videos:[
 {id:'1000000000000000000',title:'旧视频最近收藏',author:'甲',favorite:1,favorite_position:0,published_at:10,note:'处理文件/AI学习/笔记.md',raw:'原始资料/底稿.md',kind:'video'},
@@ -26,17 +26,8 @@ test('visible idle polling is slower but active jobs and login retain fast updat
  }
  assert.equal(get("statePollDelay({jobs:[{status:'needs_review'},{status:'failed'}]},false)"),15000);
 });
-test('saved order is not publication or numeric ID order',()=>assert.deepEqual(get('visible().map(v=>v.id)').slice(0,2),['1000000000000000000','1000000000000000004']));
-test('known publication newest first, unknown last',()=>{elements.sort.value='published';assert.deepEqual(get('visible().map(v=>v.published_at)'),[30,20,10,0]);elements.sort.value='collection'});
-test('raw or processed note marks saved',()=>{elements.status.value='done';assert.deepEqual(get('visible().map(v=>v.id)'),['1000000000000000000','1000000000000000004']);assert.equal(get('videoState(state.videos[1]).key'),'done')});
-test('unsaved excludes both raw and processed notes',()=>{elements.status.value='new';assert.deepEqual(get('visible().map(v=>v.id)'),['1000000000000000003','1000000000000000002'])});
 test('raw-only can distill but note and running item cannot enqueue',()=>{assert.equal(get('eligible(state.videos[1])'),true);assert.equal(get('eligible(state.videos[0])'),false);assert.equal(get('eligible(state.videos[2])'),false)});
 test('saved notes remain selectable for action ideas without becoming enqueue-eligible',()=>{assert.equal(get('selectable(state.videos[0])'),true);assert.equal(get('eligible(state.videos[0])'),false);assert.equal(get('selectable(state.videos[2])'),false)});
-test('folder source order, not main order',()=>{elements.status.value='all';vm.runInContext("folder='f'",context);assert.deepEqual(get('visible().map(v=>v.id)'),['1000000000000000004','1000000000000000000']);vm.runInContext("folder=''",context)});
-test('search composes with saved status and view',()=>{elements.search.value='甲';elements.status.value='done';assert.equal(get('visible().length'),1);elements.search.value='乙';assert.equal(get('visible().length'),1);elements.status.value='new';assert.equal(get('visible().length'),0);elements.search.value='';elements.status.value='all'});
-test('image posts can enqueue; local view separated',()=>{assert.equal(get('eligible(state.videos[4])'),true);vm.runInContext("view='local'",context);assert.equal(get('visible().length'),5)});
-test('pagination renders thirty and preserves exact slices',()=>{vm.runInContext('pageNumber=1',context);const ids=Array.from({length:65},(_,i)=>i);context.pageFixture=ids;assert.deepEqual(get('pageSlice(pageFixture)'),ids.slice(0,30));vm.runInContext('pageNumber=2',context);assert.deepEqual(get('pageSlice(pageFixture)'),ids.slice(30,60));vm.runInContext('pageNumber=3',context);assert.deepEqual(get('pageSlice(pageFixture)'),ids.slice(60))});
-test('filter shrink and empty result clamp page safely',()=>{assert.deepEqual(get('pageSlice([1,2])'),[1,2]);assert.equal(get('pageNumber'),1);vm.runInContext('pageNumber=99',context);assert.deepEqual(get('pageSlice([])'),[]);assert.equal(get('pageNumber'),1)});
 test('explicit login failure offers login instead of generic error',()=>{const n=get("syncNotice({error_code:'login_required'},{logged_in:false},165)");assert.equal(n.needsLogin,true);assert.match(n.message,/165/);assert.match(n.message,/尚未登录/)});
 test('confirmed login does not keep stale login prompt',()=>{const n=get("syncNotice({error_code:'login_required'},{logged_in:true},165)");assert.equal(n.needsLogin,false);assert.match(n.message,/登录已确认/)});
 test('network failure is not called login expiry',()=>{const n=get("syncNotice({error_code:'read_failed'},{logged_in:false,error_code:'auth_check_failed'},165)");assert.equal(n.needsLogin,false);assert.doesNotMatch(n.message,/尚未登录/)});
@@ -94,5 +85,26 @@ test('current queue hides success without mutating history',()=>{
 test('library defaults to unsaved with all and saved still available',()=>{
  const html=fs.readFileSync(path.join(__dirname,'../backend/static/index.html'),'utf8');
  assert.match(html,/<option value="new" selected>/);assert.match(html,/<option value="all">/);assert.match(html,/<option value="done">/);
+});
+test('catalog sends filters and selection instead of loading all metadata',()=>{
+ elements.status.value='raw';elements.search.value='合成';
+ vm.runInContext("pageNumber=2;folder='f';selection.add(state.videos[1].id)",context);
+ const query=new URLSearchParams(get('windowQuery().toString()'));
+ assert.equal(query.get('paged'),'1');assert.equal(query.get('page'),'2');assert.equal(query.get('folder'),'f');
+ assert.equal(query.get('filter'),'raw');assert.equal(query.get('q'),'合成');
+ assert.equal(query.get('include'),fixture.videos[1].id);assert.equal(get('eligible(state.videos[1])'),true);
+});
+test('shared draft guard routes backdrop and Escape without bypassing the editor',()=>{
+ const code=fs.readFileSync(path.join(__dirname,'../backend/static/app.js'),'utf8');
+ const section=code.slice(code.indexOf('const editorIds='),code.indexOf("window.addEventListener('beforeunload'"));
+ const listeners={};let guarded=0,dirty=true;
+ const dialog={open:true,addEventListener:(event,fn)=>listeners[event]=fn,getBoundingClientRect:()=>({left:10,right:50,top:10,bottom:50})};
+ const vmContext=vm.createContext({$:()=>dialog,dialog,pending:()=>dirty,requestClose:()=>{guarded++}});
+ vm.runInContext(section+"bindEditor('weighteditor',requestClose,pending)",vmContext);
+ const e={target:dialog,isPrimary:true,pointerId:1,clientX:2,clientY:2,preventDefault(){}};
+ assert.equal(vm.runInContext('hasPendingEditor()',vmContext),true);
+ listeners.pointerup(e);assert.equal(guarded,0);
+ listeners.pointerdown(e);listeners.pointerup(e);listeners.cancel(e);assert.equal(guarded,2);assert.equal(dialog.open,true);
+ dirty=false;assert.equal(vm.runInContext('hasPendingEditor()',vmContext),false);
 });
 console.log(passed+' frontend logic tests passed.');

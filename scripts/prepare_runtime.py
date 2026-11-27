@@ -50,7 +50,7 @@ def main():
     requirements=ROOT/'backend/requirements-lock.txt'
     if not requirements.exists():requirements=ROOT/'backend/requirements.txt'
     subprocess.run([str(py),'-m','pip','install','--disable-pip-version-check','--no-compile','-r',str(requirements)],env=env,check=True)
-    subprocess.run([str(py),'-m','playwright','install','chromium'],env=env,check=True)
+    subprocess.run([str(py),'-m','playwright','install','--no-shell','chromium'],env=env,check=True)
     installed=subprocess.check_output([str(py),'-m','pip','freeze'],env=env,text=True,encoding='utf-8')
     (RUNTIME/'DEPENDENCIES.txt').write_text(installed,encoding='utf-8')
     # Bytecode from local install paths is not part of the release payload.

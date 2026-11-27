@@ -1,5 +1,5 @@
 """Reclaim only verified, published media; never remove a note or its dependencies."""
-import hashlib, html, json, re
+import hashlib, html, json, os, re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -25,11 +25,40 @@ def local_file(root, value):
     return resolved
 
 
+def vault_notes(vault, zone, *, strict, skip=(), suffixes=('.md',)):
+    root=vault/zone
+    def onerror(error):
+        if strict:raise error
+    try:
+        local_file(vault,zone)
+        if not root.is_dir():raise FileNotFoundError(root)
+    except (OSError,ValueError) as e:
+        if strict:raise ValueError('知识库必需目录不可用，保留上次核验状态') from e
+        return
+    for folder,dirs,files in os.walk(root,onerror=onerror):
+        base=Path(folder)
+        for name in dirs[:]:
+            child=base/name
+            if name in skip or name=='.git':
+                dirs.remove(name)
+            elif child.is_symlink() or (hasattr(child,'is_junction') and child.is_junction()):
+                if strict:raise ValueError('知识库链接目录未核验，操作已暂停')
+                dirs.remove(name)
+        for name in files:
+            path=base/name
+            if path.suffix.lower() in suffixes:
+                if path.is_symlink():
+                    if strict:raise ValueError('知识库链接文件未核验，操作已暂停')
+                    continue
+                yield path
+
+
 def referenced_files(vault, files, vid):
     """Read references only; unknown/unreadable notes abort cleanup rather than guess."""
     protected=set();keys={normalized(p):p for p in files}
     links=re.compile(r'\[\[([^\]\n]+)\]\]|\[[^\]\n]*\]\(([^)\n]+)\)|(?:src|href)\s*=\s*[\"\']([^\"\']+)[\"\']',re.I)
-    notes=(p for zone in ('原始资料','处理文件','输出文件','skills') for p in (vault/zone).rglob('*'))
+    notes=(p for zone in ('原始资料','处理文件','输出文件','skills')
+           for p in vault_notes(vault,zone,strict=True,suffixes=('.md','.canvas','.base')))
     def inspect(note):
         found=set()
         text=note.read_text(encoding='utf-8-sig')
@@ -52,7 +81,6 @@ def referenced_files(vault, files, vid):
                 resolved=(base/target).resolve()
                 if normalized(resolved) in keys:found.add(keys[normalized(resolved)])
         return found
-    notes=(p for p in notes if p.suffix.lower() in {'.md','.canvas','.base'} and p.is_file() and '.git' not in p.relative_to(vault).parts)
     with ThreadPoolExecutor(max_workers=4) as workers:
         for found in workers.map(inspect,notes):protected.update(found)
     return protected

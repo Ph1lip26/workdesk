@@ -45,7 +45,7 @@ class LightweightTests(unittest.TestCase):
         raw.write_text('---\nsource: https://www.douyin.com/video/1000000000000000001\n---',encoding='utf8')
         note.write_text('---\nsource: "[[原始资料/a.md]]"\n---',encoding='utf8')
         cache={};first=scan_notes(vault,cache)
-        with patch.object(Path,'read_text',side_effect=AssertionError('unchanged note was read')):
+        with patch.object(Path,'open',side_effect=AssertionError('unchanged note was read')):
             self.assertEqual(scan_notes(vault,cache),first)
         note.rename(note.with_name('renamed.md'))
         self.assertEqual(scan_notes(vault,cache)['1000000000000000001']['note'],'处理文件/renamed.md')
@@ -87,10 +87,89 @@ class LightweightTests(unittest.TestCase):
         vid='1000000000000000001';self.store.upsert(dict(id=vid))
         self.service.record_note(vid,'处理文件/a.md','原始资料/a.md')
         folder=self.service.vault/'处理文件';folder.mkdir(parents=True)
+        (self.service.vault/'原始资料').mkdir()
         (folder/'a.md').write_bytes(b'\xff')
-        with self.assertRaisesRegex(RuntimeError,'无法读取'):self.service.refresh_notes()
+        with self.assertRaisesRegex(RuntimeError,'保留上次入库状态'):self.service.refresh_notes()
         self.assertIsNone(self.service.refresh_notes(keep_on_error=True))
         self.assertEqual(self.store.rows('SELECT note,raw FROM videos')[0],dict(note='处理文件/a.md',raw='原始资料/a.md'))
+
+    def test_missing_or_wrong_scope_keeps_snapshot_and_same_scope_single_removal_works(self):
+        v=self.service.vault
+        (v/'原始资料').mkdir(parents=True);(v/'处理文件').mkdir()
+        vid='1000000000000000001';self.store.upsert(dict(id=vid))
+        note=v/'处理文件/a.md';note.write_text('source: https://www.douyin.com/video/'+vid,encoding='utf8')
+        self.assertEqual(self.service.refresh_notes(),1)
+        self.service.vault=self.root/'absent'
+        self.assertIsNone(self.service.refresh_notes(keep_on_error=True))
+        wrong=self.root/'wrong';(wrong/'原始资料').mkdir(parents=True);(wrong/'处理文件').mkdir()
+        self.service.vault=wrong
+        with self.assertRaisesRegex(RuntimeError,'未更新关联'):self.service.refresh_notes()
+        with self.assertRaisesRegex(RuntimeError,'未写入任何笔记'):self.service.verify_vault_binding()
+        self.assertTrue(self.store.rows('SELECT note FROM videos')[0]['note'])
+        self.service.vault=v;note.unlink()
+        self.assertEqual(self.service.refresh_notes(),0)
+        self.assertEqual(self.store.rows('SELECT note FROM videos')[0]['note'],'')
+    def test_bounded_video_preserves_disk_budget_without_replacing_final(self):
+        from core import write_video_stream,MediaLimitError
+        part=self.root/'video.part';final=self.root/'video.mp4';final.write_bytes(b'old')
+        response=Mock(headers={},**{'iter_content.return_value':iter([b'a'*1000,b'b'*1000])})
+        with self.assertRaises(MediaLimitError):write_video_stream(response,part,limit=1500,reserve=0)
+        self.assertEqual(final.read_bytes(),b'old')
+        self.assertEqual(part.stat().st_size,1000)
+
+    def test_publish_full_bytes_without_replacing_existing_target(self):
+        from core import publish_new
+        target=self.root/'note.md'
+        publish_new(target,b'synthetic first')
+        with self.assertRaises(FileExistsError):publish_new(target,b'synthetic replacement')
+        self.assertEqual(target.read_bytes(),b'synthetic first')
+        self.assertFalse(list(self.root.glob('.workdesk-*.part')))
+
+    def test_catalog_keeps_sql_order_filters_counts_and_cross_page_selection(self):
+        ids=[str(1000000000000000000+i) for i in range(65)]
+        with self.store.connect() as c:
+            c.executemany("INSERT INTO videos(id,title,author,favorite,favorite_position,published_at) VALUES(?,?,?,1,?,?)",
+                          [(v,'synthetic','fixture',i,65-i) for i,v in enumerate(ids)])
+            c.execute("UPDATE videos SET raw='fixture.md' WHERE id=?",(ids[5],))
+            c.execute("UPDATE videos SET note='fixture-note.md' WHERE id=?",(ids[6],))
+            c.executemany("INSERT INTO membership(folder,video,position) VALUES('f',?,?)",[(ids[4],0),(ids[1],1)])
+        first=self.service.snapshot(window={'filter':['all'],'include':[ids[-1]]})
+        self.assertNotIn('videos',first)
+        self.assertEqual(first['totals']['favorites'],65)
+        self.assertEqual(first['catalog_page']['total'],65)
+        self.assertEqual([v['id'] for v in first['catalog_page']['videos']],ids[:30])
+        self.assertEqual(first['catalog_page']['extra_videos'][0]['id'],ids[-1])
+        rev=first['catalog_revision']
+        unchanged=self.service.snapshot(rev,first['jobs_revision'],window={})
+        self.assertNotIn('catalog_page',unchanged)
+        second=self.service.snapshot(rev,window={'view_changed':['1'],'filter':['all'],'page':['2']})['catalog_page']
+        self.assertEqual([v['id'] for v in second['videos']],ids[30:60])
+        raw=self.service.snapshot(window={'filter':['raw'],'q':['SYNTHETIC'],'page':['99']})['catalog_page']
+        self.assertEqual((raw['page'],raw['counts']['done'],raw['videos'][0]['id']),(1,2,ids[5]))
+        folder=self.service.snapshot(window={'filter':['all'],'folder':['f']})['catalog_page']
+        self.assertEqual([v['id'] for v in folder['videos']],[ids[4],ids[1]])
+
+    def test_deferred_start_can_serve_cached_catalog_before_note_check(self):
+        s=Service(store=self.store,vault=self.root/'missing',defer_index=True)
+        self.assertEqual(s.snapshot(window={})['note_check'],'checking')
+        with patch.object(s,'import_local'):s.initialize(start_worker=False)
+        self.assertEqual(s.snapshot(window={})['note_check'],'unavailable')
+
+    @unittest.skipUnless(sys.platform=='win32','Windows rename semantics')
+    def test_publish_safe_fallback_does_not_overwrite_on_windows(self):
+        import errno
+        from core import publish_new
+        target=self.root/'temp.md'
+        with patch('core.os.link',side_effect=OSError(errno.ENOTSUP,'fixture unsupported links')):
+            publish_new(target,b'synthetic')
+            with self.assertRaises(FileExistsError):publish_new(target,b'caller data')
+        self.assertEqual(target.read_bytes(),b'synthetic')
+
+    def test_unchanged_snapshot_opens_one_database_connection(self):
+        first=self.service.snapshot()
+        with patch.object(self.store,'connect',wraps=self.store.connect) as connect:
+            self.service.snapshot(first['catalog_revision'],first['jobs_revision'])
+        self.assertEqual(connect.call_count,1)
 
     def test_paused_worker_uses_long_idle_wait(self):
         self.service.wake = Mock()

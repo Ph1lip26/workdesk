@@ -193,7 +193,7 @@ class Tests(unittest.TestCase):
     def test_video_decoder_ready_before_asr_frames_and_model(self):
         s,d,j=self.video_job();calls=[];r=self.result();r.update(topic='',needs_placement=True)
         def command(args,logfile,**kw):calls.append(Path(logfile).stem)
-        def analyze(*args):calls.append('gpt');return r
+        def analyze(*args,**kwargs):calls.append('gpt');return r
         with patch('core.ROOT',self.root/'workbench'),patch.object(s,'ensure_media',return_value=d),patch('components.ensure_decoder',side_effect=lambda *_:calls.append('decoder')),patch.object(s,'run_command',side_effect=command),patch.object(s,'analyze',side_effect=analyze),patch.object(s,'publish') as publish:
             s.process_job(j);publish.assert_not_called()
         self.assertEqual(calls,['decoder','transcribe','frames','gpt'])
@@ -245,6 +245,8 @@ class Tests(unittest.TestCase):
         for config in ('project_doc_max_bytes=0','skills.max_context_tokens=1','web_search="disabled"'):
             self.assertIn(config,calls[0])
         self.assertTrue(any(isinstance(arg,str) and arg.startswith('model_instructions_file=') and 'analysis-instructions.md' in arg for arg in calls[0]))
+        self.assertEqual(calls[0][calls[0].index('--model')+1],'gpt-6.2-sol')
+        self.assertIn('model_reasoning_effort="low"',calls[0])
         disabled=[calls[0][n+1] for n,value in enumerate(calls[0][:-1]) if value=='--disable']
         self.assertTrue({'apps','plugins','shell_tool','multi_agent','sleep_tool'}<=set(disabled))
         self.assertEqual(calls[0][calls[0].index('--sandbox')+1],'read-only')

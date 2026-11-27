@@ -26,5 +26,13 @@ class PipelineTests(unittest.TestCase):
             before=(work/'visual_frames.json').stat().st_mtime_ns
             subprocess.run(command,check=True)
             self.assertEqual(before,(work/'visual_frames.json').stat().st_mtime_ns)
+            review=work/'review';review.mkdir()
+            subprocess.run(command+['--review-dir',str(review),'--review-seconds','0.6','1.7'],check=True)
+            times=json.loads((review/'frames.json').read_text(encoding='utf-8'))
+            self.assertEqual(len(times),2)
+            for i,target in enumerate((0.6,1.7)):
+                self.assertAlmostEqual(times[i],target,delta=0.11)
+                with Image.open(review/f'frame_{i:03d}.jpg') as image:self.assertEqual(image.size,(160,90))
+            self.assertEqual(before,(work/'visual_frames.json').stat().st_mtime_ns)
 
 if __name__=='__main__':unittest.main()

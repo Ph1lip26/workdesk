@@ -29,9 +29,9 @@ function openIllnessEditor(id=''){
  $('illness-error').hidden=true;$('illness-close').textContent='关闭';$('illness-delete').hidden=!id;$('illness-delete').textContent='删除记录';
  $('illnesseditor').showModal();$('illness-symptoms').focus();
 }
-function closeIllnessEditor(){
+function closeIllnessEditor(discard=false){
  if(illnessSaving)return;
- if(illnessDirty&&!illnessDiscard){illnessDiscard=true;$('illness-close').textContent='放弃修改并关闭';$('illness-error').textContent='有未保存的修改；再次点击关闭将放弃。';$('illness-error').hidden=false;return}
+ if(illnessDirty&&!discard){illnessDiscard=true;$('illness-close').textContent='放弃修改并关闭';$('illness-error').textContent='有未保存的修改；再次点击关闭将放弃。';$('illness-error').hidden=false;return}
  $('illnesseditor').close();illnessDirty=false;
 }
 async function mutateIllness(name,data){
@@ -41,8 +41,8 @@ async function mutateIllness(name,data){
  catch(e){$('illness-error').textContent=e.message;$('illness-error').hidden=false}
  finally{illnessSaving=false;for(const id of ['illness-save','illness-delete','illness-close'])$(id).disabled=false}
 }
-$('illness-close').onclick=closeIllnessEditor;
-$('illnesseditor').addEventListener('cancel',e=>{e.preventDefault();closeIllnessEditor()});
+$('illness-close').onclick=()=>closeIllnessEditor(illnessDiscard);
+bindEditor('illnesseditor',closeIllnessEditor,()=>illnessDirty||illnessSaving);
 $('illness-form').addEventListener('input',()=>{illnessDirty=true;illnessDiscard=illnessDeleteArmed=false;$('illness-close').textContent='关闭';$('illness-delete').textContent='删除记录'});
 $('illness-form').onsubmit=e=>{e.preventDefault();mutateIllness('illness_save',{id:illnessEditing?.id||'',revision:illnessEditing?.revision,day:$('illness-day').value,symptoms:$('illness-symptoms').value,content:$('illness-content').value})};
 $('illness-delete').onclick=()=>{
@@ -50,11 +50,6 @@ $('illness-delete').onclick=()=>{
  if(!illnessDeleteArmed){illnessDeleteArmed=true;$('illness-delete').textContent='确认删除这条记录';return}
  mutateIllness('illness_delete',{id:illnessEditing.id,revision:illnessEditing.revision});
 };
-let illnessBackdropPointer=null;
-const outsideIllness=e=>{const r=$('illnesseditor').getBoundingClientRect();return e.target===$('illnesseditor')&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)};
-$('illnesseditor').addEventListener('pointerdown',e=>{illnessBackdropPointer=outsideIllness(e)?e.pointerId:null});
-$('illnesseditor').addEventListener('pointerup',e=>{if(illnessBackdropPointer===e.pointerId&&outsideIllness(e))closeIllnessEditor();illnessBackdropPointer=null});
-$('illnesseditor').addEventListener('pointercancel',()=>{illnessBackdropPointer=null});
 document.addEventListener('click',e=>{
  if(e.target.closest('[data-illness-add]')){openIllnessEditor();return}
  const edit=e.target.closest('[data-illness-edit]');if(edit)openIllnessEditor(edit.dataset.illnessEdit);

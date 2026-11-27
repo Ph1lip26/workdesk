@@ -8,7 +8,7 @@ from appearance import read_mode
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=8767);a=p.parse_args()
-    service=Service();token=secrets.token_urlsafe(32);host=f'127.0.0.1:{a.port}';origin=f'http://{host}';service.origin=origin;command_lock=threading.Lock()
+    service=Service(defer_index=True);token=secrets.token_urlsafe(32);host=f'127.0.0.1:{a.port}';origin=f'http://{host}';service.origin=origin;command_lock=threading.Lock()
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
         def send(self,status,body,kind='application/json; charset=utf-8'):
@@ -33,7 +33,7 @@ def main():
                 self.send(200,brand_png(ROOT,'mark.png' if path=='/brand.png' else 'icon.png',BUNDLE/'static/brand.png'),'image/png')
             elif path=='/api/state':
                 query=parse_qs(urlparse(self.path).query)
-                self.send(200,service.snapshot(catalog=query.get('catalog',[None])[0],jobs_revision=query.get('jobs',[None])[0]))
+                self.send(200,service.snapshot(catalog=query.get('catalog',[None])[0],jobs_revision=query.get('jobs',[None])[0],window=query if 'paged' in query else None))
             elif path=='/api/sync_status':self.send(200,service.sync_status())
             elif path=='/api/home':self.send(200,service.home.snapshot())
             elif path=='/api/summaries':self.send(200,service.summaries.snapshot())
@@ -54,19 +54,24 @@ def main():
             try:
                 data=json.loads(self.rfile.read(length));name=urlparse(self.path).path.removeprefix('/api/')
                 if not isinstance(data,dict):raise ValueError('请求格式错误')
+                if name in ('open_note','open_home_note','open_purchase_note','open_summary_note'):
+                    if service.stop.is_set():raise ValueError('工作台正在退出')
+                    self.send(200,service.action(name,data));return
                 with command_lock:
                     if service.stop.is_set():raise ValueError('工作台正在退出，请重新打开后操作')
                     if name=='shutdown':
-                        if service.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running')") or service.sync_lock.locked() or service.auth_lock.locked() or service.ideas.busy or (getattr(service,'summaries',None) and service.summaries.busy):raise ValueError('有排队任务、处理任务、摘要生成、同步或登录检查，不能关闭')
+                        if service.note_check=='checking' or service.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running')") or service.sync_lock.locked() or service.auth_lock.locked() or service.ideas.busy or (getattr(service,'summaries',None) and service.summaries.busy):raise ValueError('有排队任务、处理任务、摘要生成、同步或登录检查，不能关闭')
                         # Close only the exact owned login worker, preserving its profile.
                         result=service.bridge.request('close',timeout=20)
                         if not result.get('ok'):raise RuntimeError('后台登录连接尚未关闭；未强制终止进程，请重试')
                         service.stop.set();self.send(200,dict(ok=True));threading.Thread(target=server.shutdown,daemon=True).start();return
-                    self.send(200,service.action(name,data))
+                    result=service.action(name,data)
+                self.send(200,result)
             except (ValueError,RuntimeError) as e:self.send(400,dict(error=str(e)))
             except Exception:self.send(500,dict(error='本机处理异常；已有数据保留，请检查任务日志'))
     server=ThreadingHTTPServer(('127.0.0.1',a.port),Handler)
     print(json.dumps(dict(service='workdesk',origin=origin),ensure_ascii=False),flush=True)
+    threading.Thread(target=service.initialize,daemon=True).start()
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:service.stop.set();server.server_close()

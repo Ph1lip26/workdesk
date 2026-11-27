@@ -17,7 +17,9 @@ class FakeService:
     def request(self,action,timeout):
         assert action=='close';self.closed+=1;return dict(ok=True)
     def action(self,name,data):return dict(ok=True)
-    def snapshot(self):return dict(jobs=[])
+    note_check='ready'
+    def initialize(self):pass
+    def snapshot(self,**kwargs):return dict(jobs=[])
 
 class Tests(unittest.TestCase):
     def setUp(self):

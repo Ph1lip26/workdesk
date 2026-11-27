@@ -14,7 +14,7 @@ const sourceDate=id=>sourceMeta(id)?.updated||'日期未提供';
 const sourceButton=(id,label='打开资料')=>'<button class="home-source quiet" data-home-source="'+esc(id)+'" '+(sourceMeta(id)?.available?'':'disabled')+'>'+esc(label)+homeArrow+'</button>';
 const validHomeOrder=order=>Array.isArray(order)&&order.length===HOME_CARD_IDS.length&&order.every(x=>HOME_CARD_IDS.includes(x))&&new Set(order).size===order.length;
 function selectModule(name,{animate=true}={}){
- if(!moduleRegistry[name])return;
+ if(!moduleRegistry[name]||hasPendingEditor())return;
  if(name!==currentModule)closeWorkDetail({focus:false});
  if(typeof closeWeightTooltip==='function')closeWeightTooltip();
  finishHomeDrag(true);clearHomeLandingGhosts();
@@ -50,7 +50,7 @@ function homeRows(entries,kind,{compact=false}={}){
 function renderHomepage(){
  if(homeDrag||homeLandingGhosts.size){homeDeferredRender=true;return}
  const data=homeState;if(!data)return;homeDeferredRender=false;
- const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="quiet" aria-label="更新知识库摘要，使用Codex额度">'+homeRefresh+'<span>更新摘要</span></button></div></header>';
+ const head='<header class="home-top"><h1>首页</h1><div class="home-top-actions"><button id="home-reset" class="quiet" title="恢复默认卡片顺序">恢复布局</button><button id="home-refresh" class="home-primary" aria-label="更新知识库摘要，使用Codex额度">'+homeRefresh+'<span>更新摘要</span></button></div></header>';
  const moduleTile=()=>homeTile('douyin','抖音收藏','<div id="home-module-summary"><p class="tile-note">正在读取收藏数据…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-module="douyin" data-go-source="favorites">打开收藏'+homeArrow+'</a><button class="home-source quiet" data-home-queue>处理队列'+homeArrow+'</button>');
  const materialsTile=()=>homeTile('materials','本地素材','<div id="home-material-summary"><p class="tile-note">正在读取素材记录…</p></div>','<a class="home-source quiet module-entry" href="#douyin" data-go-source="local">查看全部素材'+homeArrow+'</a><span>内容记录</span>');
  const healthTile=()=>homeTile('health','个人健康','<div id="home-health-summary"><p class="tile-note">尚未记录体重</p></div>','<a class="home-source quiet module-entry" href="#health" data-go-module="health">查看体重'+homeArrow+'</a>');
@@ -60,15 +60,8 @@ function renderHomepage(){
   $('homeview').innerHTML=head+'<p class="home-binding-note">'+esc(data.error||'个人状态资料尚未绑定；工作台功能仍可使用。')+'</p>'+purchaseEntry+'<div id="home-cards" class="home-card-grid" role="list" aria-label="工作台功能">'+moduleTile()+materialsTile()+purchaseTile()+healthTile()+'</div>';
   renderHomepageSummary();applyHomeOrder(homeOrder);return;
  }
- const overview=data.overview||[],upcoming=data.schedule;
- const attention=[...data.waiting.filter(x=>!x.deferred).map(x=>({...x,kind:'waiting'})),...data.projects.filter(x=>x.attention).map(x=>({...x,kind:'projects'}))];
- const later=[...data.projects.filter(x=>x.deferred).map(x=>({...x,kind:'projects'})),...data.waiting.filter(x=>x.deferred).map(x=>({...x,kind:'waiting'}))];
- const statusBody='<div id="home-current-brief" class="home-brief"><p class="tile-note">点击更新摘要，提炼当前状态。</p></div>';
- const nextBody='<div id="home-next-brief" class="home-brief"><p class="tile-note">点击更新摘要，提取近期已有安排。</p></div>';
- const route='';
- const focusBody=attention.length?attention.slice(0,2).map(x=>homeRows([x],x.kind,{compact:true})).join(''):'<p class="tile-note">暂无待确认事项</p>';
- const laterBody=later.length?later.slice(0,2).map(x=>homeRows([x],x.kind,{compact:true})).join(''):'<p class="tile-note">暂无明确的稍后计划</p>';
- const more=(kind,count,label)=>'<button class="home-source quiet" data-home-list="'+kind+'">'+(count>2?'全部 '+count+' 项':label)+homeArrow+'</button>';
+ const statusBody='<div id="home-current-brief" class="home-brief"><p class="tile-note">尚无状态摘要</p></div>';
+ const nextBody='<div id="home-next-brief" class="home-brief"><p class="tile-note">尚无安排摘要</p></div>';
  const tiles=[
   homeTile('status','当前状态',statusBody,sourceButton(data.stage.source,'原始记录')),
   homeTile('next','近期安排',nextBody,'<button id="summary-home-details" class="home-source quiet">来源与提示'+homeArrow+'</button>'),
@@ -84,16 +77,26 @@ function renderHomepageSummary(){
  if(typeof renderHealthHome==='function')renderHealthHome();
  if(homeDrag)return;
  const target=$('home-module-summary');if(!target)return;if(!state){for(const el of [target,$('home-material-summary')])if(el){el.innerHTML='<p class="tile-note">数据尚未连接，不显示推测数值。</p>';delete el.dataset.content}return}
- const favorites=state.videos.filter(v=>v.favorite),done=favorites.filter(saved).length;
+ const favoriteTotal=state.totals?.favorites||0,done=state.totals?.favorite_saved||0;
  const running=state.jobs.filter(j=>['running','queued'].includes(j.status)).length,review=state.jobs.filter(j=>j.status==='needs_review').length,failed=state.jobs.filter(j=>j.status==='failed').length;
  const latest=state.jobs.filter(j=>j.note&&['completed','skipped'].includes(j.status)).sort((a,b)=>b.updated-a.updated)[0];
- const html='<div class="collection-total"><strong>'+favorites.length+'</strong><span>条收藏</span></div><p class="collection-meta">已入库 '+done+' · 未入库 '+(favorites.length-done)+(running?' · 处理中 '+running:'')+(review?' · 待归类 '+review:'')+'</p>'+((failed||review)?'<button class="home-source quiet" data-home-queue>'+ (failed?failed+' 项失败待处理':review+' 项等待归类')+homeArrow+'</button>':'')+(latest?'<button class="latest-note quiet" data-open-job="'+esc(latest.id)+'"><span>最近入库</span><strong>'+esc(cleanTitle(state.videos.find(v=>v.id===latest.video)?.title||'知识笔记'))+'</strong>'+homeArrow+'</button>':'<p class="tile-note">选择值得留下的内容</p>');
+ const attention=failed+review;
+ const lead=attention
+  ?'<button class="home-attention" data-home-queue><strong>'+attention+'</strong><span>项需要你处理</span>'+homeArrow+'</button>'
+  :running?'<div class="home-work-key"><strong>'+running+'</strong><span>项正在处理</span></div>'
+  :'<p class="home-clear-state">没有待处理的异常</p>';
+ const detail=[failed&&failed+' 项失败',review&&review+' 项待归类',attention&&running&&running+' 项处理中'].filter(Boolean).join(' · ');
+ const html=lead+(detail?'<p class="tile-evidence">'+detail+'</p>':'')+
+  '<p class="collection-meta home-inventory">'+favoriteTotal+' 条收藏 · '+(favoriteTotal-done)+' 条未入库</p>';
  if(target.dataset.content!==html){target.innerHTML=html;target.dataset.content=html}
  const materialTarget=$('home-material-summary');
  if(materialTarget){
-  const allDone=state.videos.filter(saved).length;
-  const materialHtml='<div class="material-total"><strong>'+state.videos.length+'</strong><span>条内容记录</span></div><p class="material-meta">已入库 '+allDone+' · 未入库 '+(state.videos.length-allDone)+'</p><p class="tile-note material-note">包含收藏与已处理内容</p>';
-  if(materialTarget.dataset.content!==materialHtml){materialTarget.innerHTML=materialHtml;materialTarget.dataset.content=materialHtml}
+  const total=state.totals?.total||0,allDone=state.totals?.saved||0;
+  const materialHtml=latest
+   ?'<p class="tile-evidence home-material-label">最近入库</p><button class="latest-note quiet" data-open-job="'+esc(latest.id)+'"><strong>'+esc(cleanTitle(findVideo(latest.video)?.title||latest.video_title||'知识笔记'))+'</strong>'+homeArrow+'</button>'
+   :'<p class="home-clear-state">'+(total?'暂无最近入库的笔记':'暂无本地素材')+'</p>';
+  const content=materialHtml+'<p class="material-meta home-inventory">'+total+' 条记录 · '+allDone+' 条已入库</p>';
+  if(materialTarget.dataset.content!==content){materialTarget.innerHTML=content;materialTarget.dataset.content=content}
  }
  syncHomeOrder();if(typeof paintSummaries==='function')paintSummaries();
 }
@@ -107,7 +110,7 @@ function refreshHomepage(){
  homeRefreshPromise=(async()=>{
   homeBusy=true;
   try{
-   const [data]=await Promise.all([api('home'),typeof refreshPurchases==='function'&&!$('purchaseeditor').open?refreshPurchases():Promise.resolve()]);
+   const [data]=await Promise.all([api('home'),typeof refreshPurchases==='function'&&!purchaseState&&!$('purchaseeditor').open?refreshPurchases():Promise.resolve()]);
    const key=JSON.stringify(data);homeState=data;if(key!==homeFingerprint){renderHomepage();homeFingerprint=key}return true;
   }catch(e){if(!homeState){homeState={configured:false,error:'个人资料读取失败：'+e.message};renderHomepage()}else toast(e.message);return false}
   finally{homeBusy=false}

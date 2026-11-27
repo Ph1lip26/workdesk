@@ -40,3 +40,17 @@ test('external URLs cannot execute local schemes',()=>{
  assert.equal(safeExternal('https://www.douyin.com/'),true);
  for(const u of ['file:///etc/passwd','javascript:alert(1)','http://localhost','https://user:pass@example.com'])assert.equal(safeExternal(u),false);
 });
+
+test('broken JSON recovers last known config without dropping saved data',()=>{
+ const os=require('node:os'),p=require('../desktop/platform.cjs');
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'workdesk-config-fixture-'));
+ try{
+  const good={vault_path:path.join(home,'synthetic-vault')};
+  p.saveConfig(home,good,'config.last-good.json');
+  fs.writeFileSync(path.join(home,'config.json'),'{broken');
+  assert.deepEqual(p.loadConfig(home),good);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home,'config.json'),'utf8')),good);
+  const next={vault_path:path.join(home,'next-vault')};
+  p.saveConfig(home,next);assert.deepEqual(p.loadConfig(home),next);
+ }finally{for(const n of fs.readdirSync(home))fs.unlinkSync(path.join(home,n));fs.rmdirSync(home)}
+});

@@ -34,6 +34,13 @@ class SummaryTests(unittest.TestCase):
         self.service.run_command.side_effect=command
         self.s.generate(scope,payload,versions,warnings,digest,'synthetic-codex');return self.s.snapshot()['records'][0]
 
+    def test_preview_is_readonly_and_changed_input_blocks_generation(self):
+        preview=self.s.preview(dict(scope='home'));self.service.run_command.assert_not_called()
+        self.assertTrue(preview['documents'])
+        self.path.write_text('Changed after preview',encoding='utf8')
+        with self.assertRaises(ValueError):self.s.start(dict(scope='home',digest=preview['digest']))
+        self.service.run_command.assert_not_called()
+
     def test_reads_do_not_generate(self):
         self.assertEqual(self.s.snapshot(),dict(records=[],running=False));self.service.run_command.assert_not_called()
 
@@ -41,9 +48,34 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(self.generated()['status'],'completed');self.service.run_command.reset_mock()
         self.assertEqual(self.s.start(dict(scope='home'))['status'],'unchanged');self.service.run_command.assert_not_called()
 
-    def test_changed_source_changes_hash_even_outside_excerpt(self):
+    def test_change_outside_excerpt_preserves_cache(self):
         self.path.write_text('first\n'+'z'*16000+'\nold',encoding='utf8');a=self.s.collect('home')[3]
-        self.path.write_text('first\n'+'z'*16000+'\nnew',encoding='utf8');self.assertNotEqual(a,self.s.collect('home')[3])
+        self.path.write_text('first\n'+'z'*16000+'\nnew',encoding='utf8');self.assertEqual(a,self.s.collect('home')[3])
+
+    def test_home_includes_same_file_plan_only_in_window_and_omits_contact_source(self):
+        self.path.write_text('# Status\nSynthetic score report. fake@example.invalid\n# Plan\n'
+                             '| 11/19 | Thu | exam | Expired task | n |\n'
+                             '| 11/20 | Fri ✅ | exam | Completed task | n |\n'
+                             '| 11/21 | Sat | exam | Upcoming task | n |',encoding='utf8')
+        mail=self.path.with_name('mail.md');mail.write_text('unused@example.invalid',encoding='utf8')
+        (self.root/'homepage.json').write_text(json.dumps(dict(schema=1,primary_source='exam',
+            sources=[dict(id='exam',path='处理文件/status.md',heading='Status'),dict(id='plan',path='处理文件/status.md',heading='Plan'),
+                     dict(id='unused',path='处理文件/mail.md')],plans=[dict(source='plan',year=2026)])),encoding='utf8')
+        p,_,_,first=self.s.collect('home',dt.date(2026,11,20))
+        self.assertEqual([d['purpose'] for d in p['documents']],['current','next'])
+        self.assertIn('Upcoming task',p['documents'][1]['text'])
+        self.assertNotRegex(json.dumps(p),r'Expired task|Completed task|@example')
+        self.assertEqual(self.s.collect('home',dt.date(2026,11,21))[3],first)
+        self.assertNotEqual(self.s.collect('home',dt.date(2026,11,22))[3],first)
+        result=self.result(p);result['items'][0]['evidence']=[dict(source_id='s2',quote='Upcoming task')]
+        with self.assertRaises(ValueError):self.s.validate(result,p)
+    def test_home_purchase_sends_only_selected_fields(self):
+        self.service.purchases.save(dict(record=dict(title='Synthetic decision',needs='unneeded private notes',
+                                     conclusion='Wait for launch',wait_condition='official launch',status='waiting')))
+        p=self.s.collect('home')[0]
+        d=next(d for d in p['documents'] if d['purpose']=='purchase')
+        self.assertIn('Wait for launch',d['text'])
+        self.assertNotIn('unneeded private notes',d['text'])
 
     def test_bad_quote_does_not_replace_previous_result(self):
         old=self.generated()['result'];payload,versions,warnings,digest=self.s.collect('home')

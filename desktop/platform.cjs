@@ -8,14 +8,24 @@ function trusted(url, origin) {
 function safeExternal(url) {
   try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password; } catch { return false; }
 }
-function loadConfig(home) {
-  try { return JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')); } catch { return {}; }
+function readConfig(home,name) {
+  try {
+    const value=JSON.parse(fs.readFileSync(path.join(home,name),'utf8'));
+    return value&&typeof value==='object'&&!Array.isArray(value)&&typeof value.vault_path==='string'&&path.isAbsolute(value.vault_path)?value:null;
+  } catch(error) { if(error.code==='ENOENT'||error instanceof SyntaxError)return null;throw error }
 }
-function saveConfig(home, config) {
+function loadConfig(home) {
+  const current=readConfig(home,'config.json');
+  if(current)return current;
+  const backup=readConfig(home,'config.last-good.json');
+  if(backup)saveConfig(home,backup);
+  return backup||{};
+}
+function saveConfig(home, config, name='config.json') {
   fs.mkdirSync(home, {recursive:true});
-  const file = path.join(home, 'config.json'), temp = file + '.tmp';
-  fs.writeFileSync(temp, JSON.stringify(config, null, 2), {mode:0o600});
-  fs.renameSync(temp, file);
+  const file=path.join(home,name),temp=file+'.tmp';
+  fs.writeFileSync(temp,JSON.stringify(config,null,2),{mode:0o600});
+  fs.renameSync(temp,file);
 }
 function request(origin, route, token, body) {
   return new Promise((resolve, reject) => {
